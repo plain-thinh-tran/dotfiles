@@ -1,0 +1,5 @@
+{
+    "window.commandCenter": true,
+    "typescript.experimental.useTsgo": true,
+    "git.autofetch": true
+}
