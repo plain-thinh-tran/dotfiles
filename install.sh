@@ -95,6 +95,12 @@ for skill_dir in "$DOTFILES_DIR/claude/skills/"*/; do
   done
 done
 
+# Install caveman (Claude Code plugin for token compression)
+if command -v claude &>/dev/null; then
+  info "Installing caveman..."
+  curl -fsSL https://raw.githubusercontent.com/JuliusBrussee/caveman/main/install.sh | bash -s -- --only claude --non-interactive
+fi
+
 echo ""
 info "Installation complete!"
 echo ""
