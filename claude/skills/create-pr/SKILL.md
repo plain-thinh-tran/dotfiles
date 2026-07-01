@@ -21,7 +21,18 @@ Create clean, reviewer-friendly pull requests. Optimized for quick review — no
 
 Check `git status`. If there are uncommitted changes, ask the user if they'd like to commit first. Do not proceed with uncommitted work.
 
-### 2. Pre-flight: rebase and push
+### 2. Ensure Linear issue exists
+
+Check the branch name for a Linear issue ID (format: `<TEAM-ID>-<number>-...`, e.g. `PE-425-fix-something`).
+
+If the branch has no Linear issue ID:
+1. Create a Linear issue using the Linear MCP tool (`save_issue`) — team: Platform, assignee: me, title and description derived from the commits
+2. Rename the branch: `git branch -m <current-branch> <LINEAR-ID>-<short-description>`
+3. If the old branch was already pushed, delete it from remote: `git push origin --delete <old-branch>`
+
+**Do not proceed without a Linear issue.** The `verify-linear-issue` CI check will fail without one.
+
+### 3. Pre-flight: rebase and push
 
 ```bash
 # Rebase onto latest main
@@ -34,7 +45,7 @@ git push -u origin HEAD
 If rebase has conflicts, stop and ask the user to resolve them.
 If the branch was already pushed and rebase rewrote history, use `git push --force-with-lease`.
 
-### 3. Gather context
+### 4. Gather context
 
 ```bash
 # Understand what's in the PR
@@ -47,14 +58,14 @@ Identify:
 - The core motivation — what problem exists and why this change solves it
 - The category of change (see Title Format below)
 
-### 4. Scope check
+### 5. Scope check
 
 Before creating the PR, review the commits and diff:
 - If there are unrelated changes (e.g. formatting fixes mixed with logic), suggest splitting into separate PRs
 - If the PR touches 20+ files with different concerns, suggest breaking it up
 - If it's all one logical change, proceed
 
-### 5. Create the PR
+### 6. Create the PR
 
 Use `gh pr create` with this format:
 
@@ -77,11 +88,11 @@ EOF
 
 **Important:** If `gh` fails due to auth, try `unset GH_TOKEN` first and retry.
 
-### 6. Return the PR URL
+### 7. Return the PR URL
 
 Print the PR URL so the user can open it.
 
-### 7. Handle Cursor Bugbot comments
+### 8. Handle Cursor Bugbot comments
 
 After the PR is created, Cursor Bugbot will analyze the diff and may leave review comments. Check for them:
 
@@ -165,7 +176,7 @@ Fixes correlationId propagation so DLQ messages can be traced back to their orig
 [DEV-177](https://linear.app/plain/issue/DEV-177)
 ```
 
-### 8. Add inline review comments for the reviewer
+### 9. Add inline review comments for the reviewer
 
 After the PR is created (or after pushing new commits to an existing PR), review the diff and add inline comments on non-obvious, important changes to help the reviewer understand the reasoning.
 
