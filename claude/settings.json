@@ -10,6 +10,16 @@
             "timeout": 10
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"/Users/thinhtran/.claude/hooks/caveman-activate.js\"",
+            "timeout": 5,
+            "statusMessage": "Loading caveman mode..."
+          }
+        ]
       }
     ],
     "UserPromptSubmit": [
@@ -20,6 +30,16 @@
             "type": "command",
             "command": "/Users/thinhtran/.claude/hooks/peon-ping/peon.sh",
             "timeout": 10
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"/Users/thinhtran/.claude/hooks/caveman-mode-tracker.js\"",
+            "timeout": 5,
+            "statusMessage": "Tracking caveman mode..."
           }
         ]
       }
@@ -79,7 +99,8 @@
     "code-review@claude-plugins-official": true,
     "linear@claude-plugins-official": true,
     "playwright@claude-plugins-official": false,
-    "open-plan-annotator@open-plan-annotator": true
+    "open-plan-annotator@open-plan-annotator": true,
+    "caveman@caveman": true
   },
   "skipDangerousModePermissionPrompt": true,
   "statusLine": {
