@@ -1,3 +1,5 @@
+tap "zdk/tools"
+
 brew "awscli"
 brew "colima"
 brew "docker"
@@ -6,6 +8,7 @@ brew "docker-compose"
 brew "fzf"
 brew "gh"
 brew "libpq"
+brew "lowfat"
 brew "node"
 brew "peon-ping"
 brew "pulumi"
