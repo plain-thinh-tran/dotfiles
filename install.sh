@@ -77,6 +77,8 @@ link "$DOTFILES_DIR/gh/config.yml" "$HOME/.config/gh/config.yml"
 link "$DOTFILES_DIR/cursor/settings.json" "$HOME/Library/Application Support/Cursor/User/settings.json"
 
 # Claude config - symlink individual files (not the whole directory)
+link "$DOTFILES_DIR/caveman/config.json" "$HOME/.config/caveman/config.json"
+
 link "$DOTFILES_DIR/claude/CLAUDE.md" "$HOME/.claude/CLAUDE.md"
 link "$DOTFILES_DIR/claude/settings.json" "$HOME/.claude/settings.json"
 link "$DOTFILES_DIR/claude/statusline-command.sh" "$HOME/.claude/statusline-command.sh"
