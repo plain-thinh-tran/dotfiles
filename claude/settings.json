@@ -100,6 +100,16 @@
             "command": "lowfat post-read"
           }
         ]
+      },
+      {
+        "matcher": "ExitPlanMode",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "mkdir -p ~/.claude/watchers && touch ~/.claude/watchers/$(echo \"$PWD\" | md5 | cut -c1-8)-plan-ready",
+            "timeout": 5
+          }
+        ]
       }
     ]
   },
@@ -117,5 +127,7 @@
     "caveman@caveman": true,
     "html-explainers@plain-marketplace": true
   },
-  "skipDangerousModePermissionPrompt": true
+  "skipDangerousModePermissionPrompt": true,
+  "agentPushNotifEnabled": true,
+  "inputNeededNotifEnabled": true
 }

@@ -36,9 +36,11 @@ Spawn a lightweight background Claude agent with Remote Control enabled. The age
    Tracking is scoped by workspace directory hash, so watchers spawned from different Conductor workspaces don't interfere with each other.
 
 2. **Parse the request** from `$ARGUMENTS` and conversation context. Identify:
-   - **What to watch** (deployment, CI, a process, a custom condition)
+   - **What to watch** (deployment, CI, a process, plan review, a custom condition)
    - **Success/failure criteria** (what "done" means)
    - **Custom ping message** (if user specified one, otherwise generate a clear one)
+
+   **Auto-detect plan mode:** If the session is currently in plan mode, or the request mentions "plan", "review", or the context suggests a plan is being prepared, automatically use the **Plan ready for review** pattern below. The ExitPlanMode hook handles the signaling — no sentinel file needs to be created manually.
 
 3. **Build the monitoring prompt.** The prompt must be FULLY SELF-CONTAINED — the bg agent has no conversation history, no skills, no CLAUDE.md. Include:
    - Exact shell commands to check the condition
@@ -122,6 +124,25 @@ unset GH_TOKEN && gh pr checks <PR> -R team-plain/services --json name,state --j
 - Failure: `failed > 0` and `pending == 0`
 - Poll: 120s
 - Max: 90min
+
+### Plan ready for review
+
+When the user says "ping me when the plan is ready", "notify me when plan is done", or invokes /watch-and-ping during or before plan mode. A PostToolUse hook on ExitPlanMode touches a workspace-scoped sentinel file automatically.
+
+Check command:
+```bash
+WORKSPACE_KEY=$(echo "<absolute-workspace-pwd>" | md5 | cut -c1-8)
+test -f ~/.claude/watchers/${WORKSPACE_KEY}-plan-ready && echo DONE || echo WAITING
+```
+- Success: output contains `DONE`
+- On success, **clean up the sentinel**: `rm -f ~/.claude/watchers/${WORKSPACE_KEY}-plan-ready`
+- Poll: 15s (plans typically ready within minutes)
+- Max: 30min
+- Ping message: "Plan ready for review! Check Conductor."
+
+**How it works:** The ExitPlanMode PostToolUse hook in `~/.claude/settings.json` touches `~/.claude/watchers/<workspace-key>-plan-ready` when any agent finishes a plan. The watcher detects this file and pings.
+
+**Important:** Replace `<absolute-workspace-pwd>` with the actual `$PWD` of the workspace that will produce the plan (the directory where the planning agent is running), NOT the watcher's own `$PWD`.
 
 ### Generic "wait for command to succeed"
 
