@@ -1,5 +1,6 @@
 tap "zdk/tools"
 
+brew "mas"
 brew "awscli"
 brew "colima"
 brew "docker"
@@ -20,3 +21,5 @@ brew "zoxide"
 
 cask "flameshot"
 cask "session-manager-plugin"
+
+mas "Amphetamine", id: 937984704
