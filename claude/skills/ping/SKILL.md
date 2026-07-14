@@ -1,6 +1,6 @@
 ---
-name: watch-and-ping
-description: Spawn a background Claude session with Remote Control that watches a condition and pings your phone when done. Use when the user says "watch and ping", "ping me when", "notify me when", "alert me when done", or wants a phone notification for a long-running task.
+name: ping
+description: Spawn a background Claude session with Remote Control that watches a condition and pings your phone when done. Use when the user says "ping", "ping me when", "notify me when", "alert me when done", or wants a phone notification for a long-running task.
 user-invocable: true
 allowed-tools: Bash
 ---
