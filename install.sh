@@ -20,6 +20,9 @@ if ! command -v brew &>/dev/null; then
 fi
 
 # Install packages from Brewfile
+info "Updating Homebrew..."
+brew update
+
 info "Installing Homebrew packages..."
 brew bundle --file="$DOTFILES_DIR/Brewfile"
 
