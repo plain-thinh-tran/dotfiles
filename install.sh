@@ -1,7 +1,9 @@
 #!/bin/bash
 set -euo pipefail
 
-DOTFILES_DIR="$(cd "$(dirname "$0")" && pwd)"
+# Canonical dotfiles location. Hardcoded so symlinks always point here,
+# even when install.sh is run from a Conductor workspace or another clone.
+DOTFILES_DIR="/Users/thinhtran/dotfiles"
 
 # Colors
 RED='\033[0;31m'
