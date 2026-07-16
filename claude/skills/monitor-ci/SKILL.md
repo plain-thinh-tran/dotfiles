@@ -8,6 +8,16 @@ allowed-tools: Bash, Read
 
 Monitor CI checks for a PR on `team-plain/services`. PR number is optional; resolve from current branch if not provided.
 
+## Script
+
+`ci-monitor.sh` runs the strict loop below unattended: it prints the fixed layout every poll, ignores the Mergify gate, auto-reruns only known-flaky jobs (max 3 rounds), and stops on any non-flaky failure instead of retriggering blindly.
+
+```bash
+./ci-monitor.sh [-p <PR>] [-i <interval_sec>] [-t <timeout_sec>]
+```
+
+Exit codes: `0` all green, `1` real failure or flaky exhausted, `2` timeout. Use the script for hands-off monitoring; follow the steps below when you need to analyse a failure and act on it.
+
 ## Setup
 
 1. Resolve PR and branch:

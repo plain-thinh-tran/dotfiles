@@ -8,6 +8,16 @@ allowed-tools: Bash, Read, Grep, Glob
 
 Create clean, reviewer-friendly pull requests. Optimized for quick review — no walls of text, no file listings, no code snippets.
 
+## Script
+
+`create-pr.sh` enforces the strict, opinionated path: it requires a Linear id, renames the branch to `<LINEAR_ID>-<slug>`, commits everything, runs the pre-push checks, rebases on the base, pushes, and opens a PR whose body is nothing but the Linear link.
+
+```bash
+./create-pr.sh -l PE-192 -t "Fix: correlationId propagation" [-m "<commit msg>"] [-b <base>]
+```
+
+Use the script when you want the guardrails. Use the manual workflow below when a PR needs a richer description, inline reviewer comments, or bugbot handling.
+
 ## Guiding Principles
 
 - **Describe intent, not implementation.** Say what you tried to achieve, not what you did. Reviewers can read the diff for the "what".
