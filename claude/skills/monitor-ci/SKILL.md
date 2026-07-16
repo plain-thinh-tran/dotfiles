@@ -1,6 +1,6 @@
 ---
 name: monitor-ci
-description: Monitor PR CI checks, retrigger CircleCI on failure, check for new reviewer comments, and proactively report status. Use when user asks to monitor tests, check CI, or watch PR checks.
+description: Monitor PR CI checks, rerun failed GitHub Actions jobs on failure, check for new reviewer comments, and proactively report status. Use when user asks to monitor tests, check CI, or watch PR checks.
 allowed-tools: Bash, Read
 ---
 
@@ -34,10 +34,12 @@ Between polls, check for new PR review comments (skip bugbot).
 
 **Never blindly retrigger.** Always analyze first:
 
-1. Fetch failed test names from CircleCI:
+1. Identify failed jobs from check links, then fetch failure logs:
    ```bash
-   curl -s -H "Circle-Token: $CIRCLECI_TOKEN" \
-     "https://circleci.com/api/v2/project/gh/team-plain/services/<JOB_NUMBER>/tests"
+   # Get run/job IDs from check links (URL: github.com/team-plain/services/actions/runs/<RUN_ID>/job/<JOB_ID>)
+   unset GH_TOKEN && gh pr checks $PR --json name,state,link
+   # Fetch the failing job's failed steps
+   unset GH_TOKEN && gh run view --job <JOB_ID> --log-failed
    ```
 2. Review our diff: `git diff origin/main..HEAD --stat`
 3. Check if main already has a fix: `git fetch origin main && git diff origin/main -- <failing-file>`
@@ -49,17 +51,16 @@ Then decide:
 | Our changes broke it | Fix, commit, push, resume monitoring |
 | Fix already on main | Rebase onto main, push, resume monitoring |
 | Broken on main too, no fix | Fix the test, commit, push, resume monitoring |
-| Flaky / unrelated | Retrigger CircleCI, resume monitoring |
+| Flaky / unrelated | Rerun failed jobs, resume monitoring |
 
-Known flaky: `run-email-e2e-itest-pr`
+Known flaky: `Email E2E Test`
 
 ## Retrigger
 
+Rerun only the failed jobs for the run (get `<RUN_ID>` from the check link URL):
+
 ```bash
-curl -s -X POST "https://circleci.com/api/v2/project/gh/team-plain/services/pipeline" \
-  -H "Circle-Token: $CIRCLECI_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"branch": "<BRANCH>"}'
+unset GH_TOKEN && gh run rerun --failed <RUN_ID>
 ```
 
 Max 3 retrigger attempts per flaky test. If it fails 3 times, it's broken — stop and fix.
