@@ -42,6 +42,12 @@ done
 printf '%s' "$LINEAR_ID" | grep -Eq '^[A-Z]+-[0-9]+$' \
   || die "LINEAR_ID must look like PE-192, got: $LINEAR_ID"
 
+# inject the Linear id into the category prefix: "Refactor: x" -> "Refactor(PE-484): x"
+# leave the title untouched if it already carries a (ID) or has no category prefix
+if [[ "$TITLE" =~ ^([A-Za-z]+):[[:space:]]*(.*)$ ]]; then
+  TITLE="${BASH_REMATCH[1]}(${LINEAR_ID}): ${BASH_REMATCH[2]}"
+fi
+
 # gh auth in this repo can choke on a stale GH_TOKEN
 unset GH_TOKEN || true
 
@@ -99,5 +105,5 @@ git push -u --force-with-lease origin "$BRANCH"
 LINEAR_URL="https://linear.app/plain/issue/${LINEAR_ID}"
 BODY="[${LINEAR_ID}](${LINEAR_URL})"
 
-gh pr create --base "$BASE" --head "$BRANCH" --title "$TITLE" --body "$BODY"
+gh pr create --draft --base "$BASE" --head "$BRANCH" --title "$TITLE" --body "$BODY"
 gh pr view "$BRANCH" --json url --jq '.url'

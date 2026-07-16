@@ -10,7 +10,7 @@ allowed-tools: Bash, Read, Grep, Glob
 
 ## Script
 
-`create-pr.sh` requires a Linear id, renames the branch to `<LINEAR_ID>-<slug>`, commits all changes, runs the pre-push checks (`pnpm typecheck` + `format:fix` on JS/TS repos), rebases on the base, pushes, and opens a PR whose body is only the Linear link. It does nothing if a PR already exists for the branch.
+`create-pr.sh` requires a Linear id, renames the branch to `<LINEAR_ID>-<slug>`, commits all changes, runs the pre-push checks (`pnpm typecheck` + `format:fix` on JS/TS repos), rebases on the base, pushes, and opens a draft PR whose body is only the Linear link. It injects the Linear id into the title (`Refactor: x` → `Refactor(PE-484): x`) and does nothing if a PR already exists for the branch.
 
 ```bash
 ./create-pr.sh -l PE-192 -t "<Category>: <title>" [-m "<commit msg>"] [-b <base>]
@@ -26,7 +26,7 @@ Prerequisite: create the Linear ticket first (team Platform, assigned to me) —
 
 ## Title format
 
-Prefix with a category, keep the full title under 70 characters.
+Format: `<Category>(<LINEAR_ID>): <description>`, under 70 characters. Pass `-t "<Category>: <description>"`; the script adds the `(<LINEAR_ID>)`.
 
 | Category | When to use |
 |----------|-------------|
@@ -38,7 +38,7 @@ Prefix with a category, keep the full title under 70 characters.
 | `Perf:` | Performance improvements |
 | `Test:` | Adding or updating tests only |
 
-Example: `Fix: correlationId propagation for DLQ debugging`
+Example: `-t "Fix: correlationId propagation for DLQ debugging"` with `-l PE-192` → `Fix(PE-192): correlationId propagation for DLQ debugging`
 
 ## After the PR is up
 
