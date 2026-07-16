@@ -96,9 +96,17 @@ done
 # Claude skills (excluding symlink-managed ones)
 for skill_dir in "$DOTFILES_DIR/claude/skills/"*/; do
   skill_name="$(basename "$skill_dir")"
-  mkdir -p "$HOME/.claude/skills/$skill_name"
+  dest_dir="$HOME/.claude/skills/$skill_name"
+  # Skip symlink-managed skills: if the dest is already a directory symlink
+  # (e.g. it points back into this repo), linking files into it would resolve
+  # through the symlink and overwrite the source with a self-referential link.
+  if [ -L "$dest_dir" ]; then
+    info "Skipping $skill_name (symlink-managed: $dest_dir)"
+    continue
+  fi
+  mkdir -p "$dest_dir"
   for file in "$skill_dir"*; do
-    [ -f "$file" ] && link "$file" "$HOME/.claude/skills/$skill_name/$(basename "$file")"
+    [ -f "$file" ] && link "$file" "$dest_dir/$(basename "$file")"
   done
 done
 
