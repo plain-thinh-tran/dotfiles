@@ -50,6 +50,12 @@ BRANCH="$(git branch --show-current)"
 [ -n "$BRANCH" ] || die "detached HEAD; checkout a branch"
 [ "$BRANCH" != "$BASE" ] || die "refusing to open a PR from $BASE; make a feature branch"
 
+# 0. if a PR already exists for this branch, do nothing (no commit, push, or edit)
+if EXISTING_URL="$(gh pr view "$BRANCH" --json url --jq '.url' 2>/dev/null)" && [ -n "$EXISTING_URL" ]; then
+  echo "PR already exists, nothing to do: $EXISTING_URL"
+  exit 0
+fi
+
 # 2. rename branch to <LINEAR_ID>-<slug> unless it already carries the id
 slug() {
   printf '%s' "$1" | tr '[:upper:]' '[:lower:]' \
@@ -89,14 +95,9 @@ git fetch origin "$BASE"
 git rebase "origin/$BASE"
 git push -u --force-with-lease origin "$BRANCH"
 
-# 6. create or update the PR; body is ONLY the Linear link
+# 6. create the PR; body is ONLY the Linear link
 LINEAR_URL="https://linear.app/plain/issue/${LINEAR_ID}"
 BODY="[${LINEAR_ID}](${LINEAR_URL})"
 
-if gh pr view "$BRANCH" >/dev/null 2>&1; then
-  gh pr edit "$BRANCH" --title "$TITLE" --body "$BODY"
-else
-  gh pr create --base "$BASE" --head "$BRANCH" --title "$TITLE" --body "$BODY"
-fi
-
+gh pr create --base "$BASE" --head "$BRANCH" --title "$TITLE" --body "$BODY"
 gh pr view "$BRANCH" --json url --jq '.url'
