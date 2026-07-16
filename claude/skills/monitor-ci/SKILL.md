@@ -6,49 +6,27 @@ allowed-tools: Bash, Read
 
 # Monitor CI
 
-Monitor CI checks for a PR on `team-plain/services`. PR number is optional; resolve from current branch if not provided.
+Monitor CI for a PR on `team-plain/services`. `ci-monitor.sh` runs the loop; this skill covers analysing a real failure, which the script deliberately leaves to you.
 
 ## Script
 
-`ci-monitor.sh` runs the strict loop below unattended: it prints the fixed layout every poll, ignores the Mergify gate, auto-reruns only known-flaky jobs (max 3 rounds), and stops on any non-flaky failure instead of retriggering blindly.
+`ci-monitor.sh` runs the strict loop: prints a fixed layout every poll, ignores the `Mergify Merge Protections` gate, auto-reruns only known-flaky jobs (max 3 rounds), and stops on any non-flaky failure instead of retriggering blindly.
 
 ```bash
 ./ci-monitor.sh [-p <PR>] [-i <interval_sec>] [-t <timeout_sec>]
 ```
 
-Exit codes: `0` all green, `1` real failure or flaky exhausted, `2` timeout. Use the script for hands-off monitoring; follow the steps below when you need to analyse a failure and act on it.
+Defaults: PR from current branch, interval 300s, timeout 3600s. Exit codes: `0` all green, `1` real failure or flaky exhausted, `2` timeout.
 
-## Setup
+The script does not read review comments. Between polls, check for new PR review comments (skip bugbot) and surface them.
 
-1. Resolve PR and branch:
+## When the script stops on a real failure
+
+Never blindly retrigger. Analyse first:
+
+1. Fetch the failing job's logs (run/job id from the check link URL `.../actions/runs/<RUN_ID>/job/<JOB_ID>`):
    ```bash
-   BRANCH=$(git branch --show-current)
-   PR=$(unset GH_TOKEN && gh pr list --head "$BRANCH" --json number --jq '.[0].number')
-   ```
-2. Get current check status: `unset GH_TOKEN && gh pr checks $PR --json name,state`
-3. Ignore `Mergify Merge Protections` — it's a merge gate, not a real check.
-
-## Loop
-
-Poll every 5 minutes. Run in foreground — never use `run_in_background`. Stop conditions:
-
-- All checks passed → report success, stop
-- Failure detected (no checks pending) → analyze, then act
-- 1 hour elapsed → report timeout, stop
-
-If the Bash tool times out mid-sleep, re-run — the loop is idempotent.
-
-Between polls, check for new PR review comments (skip bugbot).
-
-## On Failure
-
-**Never blindly retrigger.** Always analyze first:
-
-1. Identify failed jobs from check links, then fetch failure logs:
-   ```bash
-   # Get run/job IDs from check links (URL: github.com/team-plain/services/actions/runs/<RUN_ID>/job/<JOB_ID>)
-   unset GH_TOKEN && gh pr checks $PR --json name,state,link
-   # Fetch the failing job's failed steps
+   unset GH_TOKEN && gh pr checks <PR> --json name,state,link
    unset GH_TOKEN && gh run view --job <JOB_ID> --log-failed
    ```
 2. Review our diff: `git diff origin/main..HEAD --stat`
@@ -63,31 +41,4 @@ Then decide:
 | Broken on main too, no fix | Fix the test, commit, push, resume monitoring |
 | Flaky / unrelated | Rerun failed jobs, resume monitoring |
 
-Known flaky: `Email E2E Test`
-
-## Retrigger
-
-Rerun only the failed jobs for the run (get `<RUN_ID>` from the check link URL):
-
-```bash
-unset GH_TOKEN && gh run rerun --failed <RUN_ID>
-```
-
-Max 3 retrigger attempts per flaky test. If it fails 3 times, it's broken — stop and fix.
-
-## Output
-
-```text
-## CI Monitor — HH:MM
-
-**PR**: #<number> on <branch>
-**Status**: <passed>/<total> checks passed
-
-| Check           | Status |
-|-----------------|--------|
-| run-itest-pr    | ✅ / ❌ / ⏳ |
-| run-utest-pr    | ✅ / ❌ / ⏳ |
-| ...             | ...    |
-```
-
-Be concise; report status, not raw JSON.
+Known flaky: `Email E2E Test` (the script auto-reruns this one).
