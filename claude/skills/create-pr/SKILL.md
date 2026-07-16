@@ -143,6 +143,10 @@ Examples:
 
 ## PR Description Rules
 
+**Voice:** Draft the description in Thinh's broadcast register. Read the voice profile at
+`~/.claude/skills/draft-msg/voice-profile.md` (broadcast register + formal style rules) before
+writing. Proper capitalization, clean grammar, no em dashes, no hyphenated compound modifiers.
+
 ### Do
 - **Start with a one-sentence intro** — tell the reviewer what to expect at a glance
 - **"Context" section**: 1-3 short bullet points describing the problem and intent
@@ -192,6 +196,9 @@ After the PR is created (or after pushing new commits to an existing PR), review
 - Formatting / cosmetic changes
 - Obvious code (variable renames, type updates, test assertions)
 - Anything a competent reviewer can understand in 5 seconds
+
+**Voice:** Comments are broadcast register. Match the voice profile at
+`~/.claude/skills/draft-msg/voice-profile.md` — clean grammar, no hedging, no corporate filler.
 
 **Style rules:**
 - No titles or headers — jump straight into the explanation
