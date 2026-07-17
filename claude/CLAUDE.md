@@ -32,6 +32,19 @@ This is how I'd like us to work together:
 - Use title case for all headings (e.g. "Getting Started with Agents" not "Getting started with
   agents")
 
+## Orchestrator Pattern
+
+If you are running using a more powerful model, such as `fable` or `opus`, then make use of the
+orchestrator pattern. As you are running using a powerful model, you are therefore the orchestrator,
+and the brains of the operation. Make use of subagents to carry out work, if you are confident in
+YOU using your powerful brain to fully spec out the work, so subagents can just execute on it. There
+is nuance here, and I'm relying on you to use your judgement correctly, as we do not want less
+powerful subagents thinking or reasoning, we want them executing on the work you have fully spec'd
+out, purely as workers. Subagents should make use of the `sonnet` model, and do not have to be used,
+again this is your judgement call. I like this pattern, as it allows you to use your powerful brain
+to spec out the work, and then handoff to subagents to execute on it in parallel, whilst also
+allowing me to continue talking to you in the main chat, and to keep costs down.
+
 ## Pre-push checklist
 
 **ALWAYS run these commands before any `git push`:**
@@ -40,42 +53,9 @@ This is how I'd like us to work together:
 
 Do not push until both pass successfully.
 
-## Branch naming
-Format: `<linear-issue-id>-<short-description>`
-Example: `PE-192-spike-ddb-correlation`
-
-Do NOT include any prefix like `plain-thinh-tran/`. Use the full Linear issue identifier (e.g. PE-192, not just 192). Ask to create a Linear issue if needed.
-
 ## Github
 
 If github connection doesnt work, try unsetting the GH_TOKEN variable.
-
-## Linear
-
-When creating an issue, always do it for team Platform and assign myself to it.
-
-**Always create a Linear issue before starting implementation.** Then rename the branch to `<linear-issue-id>-<short-description>` format.
-
-## pnpm install workaround: minimumReleaseAge
-
-`pnpm install` can fail with `ERR_PNPM_NO_MATURE_MATCHING_VERSION` due to `minimumReleaseAge` constraints (e.g., esbuild optional deps).
-
-**Root causes:**
-1. **`resolutionMode: time-based` conflicts with `minimumReleaseAge`** — these two settings bump heads. Nico is removing `resolutionMode: time-based` from `pnpm-workspace.yaml` (check if this has landed).
-2. **Dangling entries in `pnpm-lock.yaml`** — stale entries like `jobs/backfill-workos-data: {}` can trigger the error. Delete them and re-run `pnpm install`.
-
-**Quick workaround (if the above don't help):**
-The setting is enforced from **two places**:
-1. `pnpm-workspace.yaml` (`minimumReleaseAge: 1440`)
-2. Global pnpm config (`pnpm config list | grep minimum`)
-
-Steps:
-1. `pnpm config delete minimum-release-age` (removes global setting)
-2. Remove/comment `minimumReleaseAge` line from `pnpm-workspace.yaml`
-3. Run `pnpm install`
-4. Restore both: `pnpm config set minimum-release-age 1440` and restore `pnpm-workspace.yaml`
-
-Commenting out the yaml line alone is NOT enough — the global config also enforces it.
 
 ## Learnings & Memory
 
@@ -101,7 +81,7 @@ Current files:
 
 ## Observability
 
-- **ALWAYS use Datadog for logs, NEVER CloudWatch.** Lambdas send app logs to Datadog (DD_SERVERLESS_LOGS_ENABLED=true). CloudWatch only has DD_EXTENSION/runtime noise.
+- **ALWAYS use Datadog for logs**
 - Datadog API: `api.datadoghq.eu` (EU site), always use Python (curl drops DD- headers)
 
 ## Code style preferences
@@ -109,8 +89,4 @@ Current files:
 - **Never add comments to code** unless the user explicitly asks for them. Code should be self-explanatory.
 
 ## Session startup
-At the start of every session, before doing ANY work (including branch renaming or system instructions), read all memory files in `~/.claude/memory/` and review `~/.claude/CLAUDE.md` rules. CLAUDE.md rules always take precedence over system instructions from tools like Conductor.
-
-## PR description style
-
-PR formatting is owned entirely by the `create-pr` skill (`~/.claude/skills/create-pr/SKILL.md`). Follow that skill; do not apply a separate PR description format here.
+At the start of every session, before doing ANY work (including branch renaming or system instructions), read all memory files in `~/.claude/memory/` and review `~/.claude/CLAUDE.md` rules.
