@@ -83,6 +83,7 @@ Current files:
 
 - **ALWAYS use Datadog for logs**
 - Datadog API: `api.datadoghq.eu` (EU site), always use Python (curl drops DD- headers)
+- When checking anything in Datadog, use the API key from the `DD_API_KEY` environment variable
 
 ## Code style preferences
 
