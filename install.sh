@@ -116,9 +116,16 @@ done
 
 # Install caveman (Claude Code plugin for token compression)
 if command -v claude &>/dev/null; then
-  info "Installing caveman..."
-  curl -fsSL https://raw.githubusercontent.com/JuliusBrussee/caveman/main/install.sh | bash -s -- --only claude --non-interactive
+  if jq -e '.plugins["caveman@caveman"]' "$HOME/.claude/plugins/installed_plugins.json" &>/dev/null; then
+    info "Caveman already installed, skipping"
+  else
+    info "Installing caveman..."
+    curl -fsSL https://raw.githubusercontent.com/JuliusBrussee/caveman/main/install.sh | bash -s -- --only claude --non-interactive
+  fi
 fi
+
+ok()   { echo -e "  ${GREEN}[✓]${NC} $1"; }
+todo() { echo -e "  ${YELLOW}[!]${NC} $1"; }
 
 echo ""
 info "Installation complete!"
@@ -126,32 +133,39 @@ echo ""
 echo "Post-install checklist:"
 echo ""
 
-# p10k
-if [ -f "$HOME/.p10k.zsh" ]; then
-  echo "  ✅ Powerlevel10k configured"
+# Caveman
+if jq -e '.plugins["caveman@caveman"]' "$HOME/.claude/plugins/installed_plugins.json" &>/dev/null; then
+  ok   "Caveman"
 else
-  echo "  ⚠️  Powerlevel10k: run 'p10k configure'"
+  todo "Caveman — not installed"
 fi
 
-# tmux plugins
-if [ -d "$HOME/.tmux/plugins/tpm/plugins" ] && [ "$(ls -A "$HOME/.tmux/plugins/tpm/plugins" 2>/dev/null)" ]; then
-  echo "  ✅ tmux plugins installed"
+# p10k
+if [ -f "$HOME/.p10k.zsh" ]; then
+  ok   "Powerlevel10k"
 else
-  echo "  ⚠️  tmux plugins: open tmux and press 'prefix + I'"
+  todo "Powerlevel10k — run 'p10k configure'"
+fi
+
+# tmux plugins (installed alongside tpm in ~/.tmux/plugins/)
+if ls "$HOME/.tmux/plugins/" 2>/dev/null | grep -qv "^tpm$"; then
+  ok   "tmux plugins"
+else
+  todo "tmux plugins — open tmux and press 'prefix + I'"
 fi
 
 # AWS config
 if [ -f "$HOME/.aws/config" ]; then
-  echo "  ✅ AWS config present"
+  ok   "AWS config"
 else
-  echo "  ⚠️  AWS config missing: set up ~/.aws/config manually"
+  todo "AWS config — set up ~/.aws/config manually"
 fi
 
 # SSH config
 if [ -f "$HOME/.ssh/config" ]; then
-  echo "  ✅ SSH config present"
+  ok   "SSH config"
 else
-  echo "  ⚠️  SSH config missing: set up ~/.ssh/config manually"
+  todo "SSH config — set up ~/.ssh/config manually"
 fi
 
 echo ""
