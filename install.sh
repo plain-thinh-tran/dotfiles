@@ -62,12 +62,16 @@ fi
 link() {
   local src="$1"
   local dest="$2"
-  
+
+  if [ -L "$dest" ] && [ "$(readlink "$dest")" = "$src" ]; then
+    return
+  fi
+
   if [ -e "$dest" ] || [ -L "$dest" ]; then
     warn "Backing up existing $dest to ${dest}.backup"
     mv "$dest" "${dest}.backup"
   fi
-  
+
   mkdir -p "$(dirname "$dest")"
   ln -sf "$src" "$dest"
   info "Linked $src -> $dest"
@@ -122,7 +126,5 @@ echo ""
 warn "Manual steps remaining:"
 echo "  1. Run 'p10k configure' to set up your Powerlevel10k prompt"
 echo "  2. Open tmux and press 'prefix + I' to install tmux plugins"
-echo "  3. Install peon-ping skills: brew install peon-ping"
-echo "  4. Set up Plain Toolbox for the datadog skill symlink"
-echo "  5. Set up AWS config manually (~/.aws/config)"
-echo "  6. Set up SSH config manually (~/.ssh/config)"
+echo "  3. Set up AWS config manually (~/.aws/config)"
+echo "  4. Set up SSH config manually (~/.ssh/config)"
