@@ -123,8 +123,35 @@ fi
 echo ""
 info "Installation complete!"
 echo ""
-warn "Manual steps remaining:"
-echo "  1. Run 'p10k configure' to set up your Powerlevel10k prompt"
-echo "  2. Open tmux and press 'prefix + I' to install tmux plugins"
-echo "  3. Set up AWS config manually (~/.aws/config)"
-echo "  4. Set up SSH config manually (~/.ssh/config)"
+echo "Post-install checklist:"
+echo ""
+
+# p10k
+if [ -f "$HOME/.p10k.zsh" ]; then
+  echo "  ✅ Powerlevel10k configured"
+else
+  echo "  ⚠️  Powerlevel10k: run 'p10k configure'"
+fi
+
+# tmux plugins
+if [ -d "$HOME/.tmux/plugins/tpm/plugins" ] && [ "$(ls -A "$HOME/.tmux/plugins/tpm/plugins" 2>/dev/null)" ]; then
+  echo "  ✅ tmux plugins installed"
+else
+  echo "  ⚠️  tmux plugins: open tmux and press 'prefix + I'"
+fi
+
+# AWS config
+if [ -f "$HOME/.aws/config" ]; then
+  echo "  ✅ AWS config present"
+else
+  echo "  ⚠️  AWS config missing: set up ~/.aws/config manually"
+fi
+
+# SSH config
+if [ -f "$HOME/.ssh/config" ]; then
+  echo "  ✅ SSH config present"
+else
+  echo "  ⚠️  SSH config missing: set up ~/.ssh/config manually"
+fi
+
+echo ""
