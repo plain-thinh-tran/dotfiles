@@ -160,9 +160,5 @@ Cross-reference deployment timestamps with when errors first appeared in Datadog
 
 Present a structured analysis directly to the user (NOT as a plan file):
 
-1. **DLQ Overview** — How many messages, time range, common patterns
-2. **Root Cause** — What exactly is causing messages to fail (with evidence)
-3. **Trigger** — What change or event caused this to start (PR, deployment, external data change)
-4. **Impact** — What functionality is affected, which customers/workspaces
-5. **Suggested Fix** — What needs to change to resolve the issue (describe, don't implement)
-6. **Redriveability** — Whether DLQ messages can be redriven after a fix, or if they need manual intervention
+1. **DLQ Overview** — How many messages, time range, common patterns, error for each message in a table
+2. **Impact** — What functionality is affected, which customers/workspaces

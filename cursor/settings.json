@@ -3,5 +3,6 @@
     "typescript.experimental.useTsgo": true,
     "git.autofetch": true,
     "git.ignoreRebaseWarning": true,
-    "git.openRepositoryInParentFolders": "never"
+    "git.openRepositoryInParentFolders": "never",
+    "window.autoDetectColorScheme": true
 }

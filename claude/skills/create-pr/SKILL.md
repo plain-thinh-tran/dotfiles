@@ -10,7 +10,7 @@ allowed-tools: Bash, Read, Grep, Glob
 
 ## Script
 
-`create-pr.sh` requires a Linear id, renames the branch to `<LINEAR_ID>-<slug>`, commits all changes, runs the pre-push checks (`pnpm typecheck` + `format:fix` on JS/TS repos), rebases on the base, pushes, and opens a draft PR whose body is only the Linear link. It injects the Linear id into the title (`Refactor: x` → `Refactor(PE-484): x`) and does nothing if a PR already exists for the branch.
+`create-pr.sh` requires a Linear id, renames the branch to `<LINEAR_ID>/<slug>` (slug from the description only, so `-l PE-521 -t "Fix: mute weekday only cron monitors"` → `PE-521/mute-weekday-only-cron-monitors`), commits all changes, runs the pre-push checks (`pnpm typecheck` + `format:fix` on JS/TS repos), rebases on the base, pushes, and opens a draft PR whose body is only the Linear link. It injects the Linear id into the title (`Refactor: x` → `Refactor(PE-484): x`) and does nothing if a PR already exists for the branch.
 
 ```bash
 ./create-pr.sh -l PE-192 -t "<Category>: <title>" [-m "<commit msg>"] [-b <base>]

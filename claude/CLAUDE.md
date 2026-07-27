@@ -34,7 +34,7 @@ This is how I'd like us to work together:
 
 ## Orchestrator Pattern
 
-If you are running using a more powerful model, such as `fable` or `opus`, then make use of the
+If you are running using a more powerful model, such as `fable` or `opus`, make use of the
 orchestrator pattern. As you are running using a powerful model, you are therefore the orchestrator,
 and the brains of the operation. Make use of subagents to carry out work, if you are confident in
 YOU using your powerful brain to fully spec out the work, so subagents can just execute on it. There

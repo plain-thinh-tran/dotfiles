@@ -4,9 +4,9 @@
 #
 # Forces, in order:
 #   1. A Linear issue id (you must have created the ticket first)
-#   2. Branch renamed to <LINEAR_ID>-<slug> (no plain-thinh-tran/ prefix)
+#   2. Branch renamed to <LINEAR_ID>/<slug> (no plain-thinh-tran/ prefix)
 #   3. All working-tree changes committed
-#   4. Pre-push checks (pnpm typecheck + format:fix) when it is a JS/TS repo
+#   4. Pre-push checks (typecheck + format:fix) when the repo defines them
 #   5. Rebase on origin/<base>, then push
 #   6. A PR with a proper title and a body that is ONLY the Linear link
 #
@@ -44,8 +44,10 @@ printf '%s' "$LINEAR_ID" | grep -Eq '^[A-Z]+-[0-9]+$' \
 
 # inject the Linear id into the category prefix: "Refactor: x" -> "Refactor(PE-484): x"
 # leave the title untouched if it already carries a (ID) or has no category prefix
+DESCRIPTION="$TITLE"
 if [[ "$TITLE" =~ ^([A-Za-z]+):[[:space:]]*(.*)$ ]]; then
-  TITLE="${BASH_REMATCH[1]}(${LINEAR_ID}): ${BASH_REMATCH[2]}"
+  DESCRIPTION="${BASH_REMATCH[2]}"
+  TITLE="${BASH_REMATCH[1]}(${LINEAR_ID}): ${DESCRIPTION}"
 fi
 
 # gh auth in this repo can choke on a stale GH_TOKEN
@@ -64,11 +66,17 @@ fi
 
 # 2. rename branch to <LINEAR_ID>-<slug> unless it already carries the id
 slug() {
-  printf '%s' "$1" | tr '[:upper:]' '[:lower:]' \
-    | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//' | cut -c1-40
+  local s
+  s="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' \
+    | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//')"
+  if [ "${#s}" -le 48 ]; then
+    printf '%s' "$s"
+  else
+    printf '%s' "${s:0:48}" | sed -E 's/-[^-]*$//'
+  fi
 }
-if ! printf '%s' "$BRANCH" | grep -Eq "^${LINEAR_ID}-"; then
-  NEW_BRANCH="${LINEAR_ID}-$(slug "$TITLE")"
+if ! printf '%s' "$BRANCH" | grep -Eq "^${LINEAR_ID}/"; then
+  NEW_BRANCH="${LINEAR_ID}/$(slug "$DESCRIPTION")"
   echo "renaming branch: $BRANCH -> $NEW_BRANCH"
   git branch -m "$BRANCH" "$NEW_BRANCH"
   git push origin --delete "$BRANCH" 2>/dev/null || true
@@ -86,13 +94,26 @@ git rev-parse --verify "origin/$BASE" >/dev/null 2>&1 || git fetch origin "$BASE
   || die "no commits ahead of origin/$BASE; nothing to open a PR for"
 
 # 4. pre-push checks for JS/TS repos (matches the global pre-push checklist)
-if [ -f package.json ] && command -v pnpm >/dev/null 2>&1; then
-  echo "pnpm typecheck"
-  pnpm typecheck
-  echo "pnpm run format:fix"
-  pnpm run format:fix
-  if ! git diff --quiet; then
-    git add -A && git commit -m "chore: format:fix"
+# Pick the package manager from the lockfile, and only run scripts the repo defines.
+if [ -f package.json ]; then
+  PM=""
+  if   [ -f pnpm-lock.yaml ]    && command -v pnpm >/dev/null 2>&1; then PM="pnpm"
+  elif [ -f package-lock.json ] && command -v npm  >/dev/null 2>&1; then PM="npm"
+  elif [ -f yarn.lock ]         && command -v yarn >/dev/null 2>&1; then PM="yarn"
+  fi
+
+  if [ -n "$PM" ]; then
+    for script in typecheck format:fix; do
+      if jq -e --arg s "$script" '.scripts[$s] // empty' package.json >/dev/null 2>&1; then
+        echo "$PM run $script"
+        "$PM" run "$script"
+      else
+        echo "skipping $script (not defined in package.json)"
+      fi
+    done
+    if ! git diff --quiet; then
+      git add -A && git commit -m "chore: format:fix"
+    fi
   fi
 fi
 
