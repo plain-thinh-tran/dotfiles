@@ -58,6 +58,10 @@ Fixed in <short-sha>. <One sentence explaining the fix.>
 
 If the finding is not valid, reply explaining why and resolve.
 
+### CI failures
+
+Use the `monitor-ci` skill. If `Deploy / Deploy SST Stage` fails, reach for its `deploy-doctor.py` before rerunning anything: PR-stage deploys usually fail on environment drift, not on the PR's code.
+
 ### Inline reviewer comments
 
 Add inline comments on non-obvious, important changes to help the reviewer.
