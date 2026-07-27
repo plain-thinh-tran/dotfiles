@@ -108,10 +108,10 @@ for skill_dir in "$DOTFILES_DIR/claude/skills/"*/; do
     info "Skipping $skill_name (symlink-managed: $dest_dir)"
     continue
   fi
-  mkdir -p "$dest_dir"
-  for file in "$skill_dir"*; do
-    [ -f "$file" ] && link "$file" "$dest_dir/$(basename "$file")"
-  done
+  # link every file, preserving subdirectories (e.g. scripts/preview.sh)
+  while IFS= read -r file; do
+    link "$file" "$dest_dir/${file#"$skill_dir"}"
+  done < <(find "$skill_dir" -type f)
 done
 
 # Install caveman (Claude Code plugin for token compression)
