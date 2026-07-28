@@ -61,18 +61,3 @@ If the finding is not valid, reply explaining why and resolve.
 ### CI failures
 
 Use the `monitor-ci` skill. If `Deploy / Deploy SST Stage` fails, reach for its `deploy-doctor.py` before rerunning anything: PR-stage deploys usually fail on environment drift, not on the PR's code.
-
-### Inline reviewer comments
-
-Add inline comments on non-obvious, important changes to help the reviewer.
-
-Comment on: design decisions where alternatives existed, tricky logic, a shared pattern across files (explain once, reference elsewhere), IAM/infra justification, graceful fallbacks. Do NOT comment on imports, formatting, obvious renames, or anything a reviewer gets in 5 seconds.
-
-Voice: broadcast register. Match `~/.claude/skills/draft-msg/voice-profile.md` — clean grammar, no hedging, no filler. No titles; jump into the explanation. Defend the decision (why this approach), 2-4 sentences. If several files share a pattern, explain it once and write "Same pattern as above".
-
-```bash
-unset GH_TOKEN && gh api repos/<owner>/<repo>/pulls/<number>/comments \
-  -f commit_id="<sha>" -f path="<file>" -f side="RIGHT" -F line=<line> -f body="<comment>"
-```
-
-For multi-line comments add `-F start_line=<start> -f start_side="RIGHT"`.
