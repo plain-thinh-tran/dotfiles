@@ -1,174 +1,114 @@
 ---
 name: ping
-description: Spawn a background Claude session with Remote Control that watches a condition and pings your phone when done. Use when the user says "ping", "ping me when", "notify me when", "alert me when done", or wants a phone notification for a long-running task.
+description: Send a Slack DM notification via the Rocky bot token, either immediately or when a variable condition resolves. Use when the user says "ping", "ping me when", "notify me when", "alert me when done", or wants a Slack DM for a long-running task.
 user-invocable: true
 allowed-tools: Bash
 ---
 
-# Watch and Ping
+# Ping (Slack DM)
 
-Spawn a lightweight background Claude agent with Remote Control enabled. The agent monitors a condition and sends a mobile push notification (via PushNotification + Remote Control) when the condition resolves.
+Notify the user with a direct Slack message using the Rocky bot token. Two modes:
+
+1. **Immediate** — send one DM right now.
+2. **Conditional** — watch a variable condition in the background and DM when it resolves ("ping me when the deployment is done").
 
 **User's request:** $ARGUMENTS
 
-## How it works
+## Prerequisite
 
-`claude --bg --remote-control` starts a background agent with Remote Control active. Remote Control enables PushNotification to push to the user's phone. The agent polls a condition, and when it resolves, calls PushNotification.
+The bot token must be in the `ROCKY_OAUTH_TOKEN` environment variable (a Slack `xoxb-...` bot token). The scripts read it directly; the token is never hardcoded. Target defaults to Slack user `U0AQCM5FQ7K`, overridable with `SLACK_PING_USER_ID`.
 
-## Your job
+If `ROCKY_OAUTH_TOKEN` is unset, the script exits with a clear error — tell the user to export it in their shell profile.
 
-1. **Clean up old watchers from THIS workspace only.** Run this BEFORE spawning:
+## The scripts (deterministic, no LLM in the loop)
+
+- `scripts/slack-notify.sh "message"` — sends one DM. Exits 0 on success, non-zero with the Slack error on failure.
+- `scripts/slack-watch.sh` — polls a shell command and calls `slack-notify.sh` when the condition resolves. Config is all via environment variables (see its header).
+
+The model's only job is to translate a *variable* condition into a concrete `CHECK_CMD` + match rule, then launch the watcher. Everything after that is deterministic shell.
+
+## Mode 1 — immediate ping
+
+```bash
+~/.claude/skills/ping/scripts/slack-notify.sh "your message here"
+```
+
+Use this whenever the user just wants to be told something now.
+
+## Mode 2 — conditional ping
+
+1. **Parse the request** into:
+   - **CHECK_CMD** — a shell command whose output (or exit code) reveals the condition.
+   - **Match rule** — either a `SUCCESS_PATTERN` (grep -E over the command output) and optional `FAIL_PATTERN`, or `USE_EXIT_CODE=1` (success = the command exits 0).
+   - **SUCCESS_MESSAGE** / optional **FAIL_MESSAGE** — the DM text.
+   - **POLL_INTERVAL** (default 60s) and **MAX_MINUTES** (default 60).
+
+2. **Launch it in the background** so it survives the turn:
 
    ```bash
-   mkdir -p ~/.claude/watchers
-   WORKSPACE_KEY=$(echo "$PWD" | md5 | cut -c1-8)
-   WATCHER_FILE=~/.claude/watchers/${WORKSPACE_KEY}.txt
-
-   CLEANED=0
-   if [ -f "$WATCHER_FILE" ]; then
-     while IFS= read -r sid; do
-       claude stop "$sid" 2>/dev/null && CLEANED=$((CLEANED+1))
-     done < "$WATCHER_FILE"
-     rm -f "$WATCHER_FILE"
-   fi
+   nohup env \
+     CHECK_CMD='<command>' \
+     SUCCESS_PATTERN='<pattern>' \
+     FAIL_PATTERN='<pattern-or-omit>' \
+     SUCCESS_MESSAGE='<done message>' \
+     FAIL_MESSAGE='<failed message>' \
+     POLL_INTERVAL=60 \
+     MAX_MINUTES=60 \
+     ~/.claude/skills/ping/scripts/slack-watch.sh \
+     >/tmp/ping-watch-$$.log 2>&1 &
+   echo "watcher PID $!  (log: /tmp/ping-watch-$$.log)"
    ```
 
-   Tracking is scoped by workspace directory hash, so watchers spawned from different Conductor workspaces don't interfere with each other.
+3. **Report** the PID and log path so the user can `kill <pid>` or `tail` it.
 
-2. **Parse the request** from `$ARGUMENTS` and conversation context. Identify:
-   - **What to watch** (deployment, CI, a process, plan review, a custom condition)
-   - **Success/failure criteria** (what "done" means)
-   - **Custom ping message** (if user specified one, otherwise generate a clear one)
+## Match rule: which to use
 
-   **Auto-detect plan mode:** If the session is currently in plan mode, or the request mentions "plan", "review", or the context suggests a plan is being prepared, automatically use the **Plan ready for review** pattern below. The ExitPlanMode hook handles the signaling — no sentinel file needs to be created manually.
-
-3. **Build the monitoring prompt.** The prompt must be FULLY SELF-CONTAINED — the bg agent has no conversation history, no skills, no CLAUDE.md. Include:
-   - Exact shell commands to check the condition
-   - Polling interval (default 60s, adjust for context)
-   - Clear success/failure definitions
-   - Maximum watch time (default 60 minutes)
-   - The PushNotification message to send
-
-4. **Launch the bg agent and track it:**
-
-   ```bash
-   OUTPUT=$(claude --bg \
-     --remote-control "watch-<descriptive-slug>" \
-     --model sonnet \
-     --dangerously-skip-permissions \
-     --allowedTools "Bash,Read,PushNotification" \
-     -- "<the-prompt>" 2>&1)
-   echo "$OUTPUT"
-
-   # Extract and track session ID for future cleanup (same WATCHER_FILE from step 1)
-   SESSION_ID=$(echo "$OUTPUT" | grep -o 'backgrounded · [a-f0-9]*' | awk '{print $NF}')
-   if [ -n "$SESSION_ID" ]; then
-     echo "$SESSION_ID" >> "$WATCHER_FILE"
-   fi
-   ```
-
-   - `--model sonnet` — monitoring is simple work, save cost
-   - `--dangerously-skip-permissions` — agent runs unattended, can't prompt for approval
-   - `--allowedTools` — restrict to only what's needed for safety
-   - `--remote-control` — enables phone push via PushNotification
-   - `--` before prompt — REQUIRED because `--allowedTools` is variadic and eats the positional prompt without it
-
-5. **Report back** with the session ID and management commands.
-
-## Prompt template
-
-Use this structure for the bg agent prompt. Adapt the specifics to the request.
-
-```
-You are a background monitoring agent. Your ONLY job: watch a condition, send a phone notification when it resolves, then stop.
-
-CONDITION: <what to watch>
-CHECK COMMAND: <exact shell command(s) to run>
-SUCCESS: <what output/state means done-success>
-FAILURE: <what output/state means done-failure>
-POLL INTERVAL: <N> seconds
-MAX DURATION: <M> minutes
-PING MESSAGE ON SUCCESS: <message, under 200 chars>
-PING MESSAGE ON FAILURE: <message, under 200 chars>
-
-RULES:
-- Run the check command, evaluate the result, sleep, repeat.
-- When success or failure is detected, call the PushNotification tool with the appropriate message and status "proactive". Then STOP.
-- If the check command itself errors 3 times in a row, send a PushNotification about the monitoring error and stop.
-- After MAX DURATION with no resolution, send: "<thing> still running after <M>min — check manually"
-- No commentary, no analysis, no extra output. Just poll and ping.
-- IMPORTANT: Use the PushNotification tool (not echo/print). The message arg must be under 200 chars.
-```
+- **USE_EXIT_CODE=1** — "wait until this command succeeds" (e.g. a healthcheck `curl -fsS`, a `test -f`, a script that returns 0 when done). Simplest when the command already signals via exit code.
+- **SUCCESS_PATTERN / FAIL_PATTERN** — when the command always exits 0 but its *output* carries the status (e.g. a CI JSON blob with `"conclusion":"success"`). This is the common case for polling APIs.
 
 ## Common patterns
 
 ### Prod deployment (team-plain/services)
 
-Check command:
 ```bash
-unset GH_TOKEN && gh run list --workflow=deploy.yml --limit=3 -R team-plain/services --json status,conclusion,headBranch,databaseId --jq '.[] | select(.headBranch=="main") | {status,conclusion,databaseId}' | head -1
+CHECK_CMD='unset GH_TOKEN && gh run list --workflow=deploy.yml --limit=3 -R team-plain/services --json status,conclusion,headBranch --jq ".[] | select(.headBranch==\"main\") | \"\(.status) \(.conclusion)\"" | head -1'
+SUCCESS_PATTERN='completed success'
+FAIL_PATTERN='completed failure'
+SUCCESS_MESSAGE='✅ Prod deploy done (main).'
+FAIL_MESSAGE='❌ Prod deploy FAILED (main) — check the run.'
+POLL_INTERVAL=60
+MAX_MINUTES=60
 ```
-- Success: `conclusion` is `"success"` and `status` is `"completed"`
-- Failure: `conclusion` is `"failure"` and `status` is `"completed"`
-- Still running: `status` is `"in_progress"` or `"queued"`
-- Poll: 60s
-- Max: 60min
 
 ### PR CI checks
 
-Resolve PR from branch or number, then:
 ```bash
-unset GH_TOKEN && gh pr checks <PR> -R team-plain/services --json name,state --jq '[.[] | select(.name != "Mergify Merge Protections")] | {total: length, passed: [.[] | select(.state == "SUCCESS")] | length, failed: [.[] | select(.state == "FAILURE")] | length, pending: [.[] | select(.state == "PENDING")] | length}'
+CHECK_CMD='unset GH_TOKEN && gh pr checks <PR> -R team-plain/services --json state --jq "[.[] | select(.name != \"Mergify Merge Protections\")] | \"pending=\([.[]|select(.state==\"PENDING\")]|length) failed=\([.[]|select(.state==\"FAILURE\")]|length)\""'
+SUCCESS_PATTERN='pending=0 failed=0'
+FAIL_PATTERN='failed=[1-9]'
+SUCCESS_MESSAGE='✅ PR <PR> checks all green.'
+FAIL_MESSAGE='❌ PR <PR> has failing checks.'
+POLL_INTERVAL=120
+MAX_MINUTES=90
 ```
-- Success: `failed == 0` and `pending == 0`
-- Failure: `failed > 0` and `pending == 0`
-- Poll: 120s
-- Max: 90min
 
-### Plan ready for review
+### Wait for a command to succeed (exit-code mode)
 
-When the user says "ping me when the plan is ready", "notify me when plan is done", or invokes /watch-and-ping during or before plan mode. A PostToolUse hook on ExitPlanMode touches a workspace-scoped sentinel file automatically.
-
-Check command:
 ```bash
-WORKSPACE_KEY=$(echo "<absolute-workspace-pwd>" | md5 | cut -c1-8)
-test -f ~/.claude/watchers/${WORKSPACE_KEY}-plan-ready && echo DONE || echo WAITING
+CHECK_CMD='curl -fsS https://example.com/health'
+USE_EXIT_CODE=1
+SUCCESS_MESSAGE='✅ Service is healthy.'
+POLL_INTERVAL=30
+MAX_MINUTES=30
 ```
-- Success: output contains `DONE`
-- On success, **clean up the sentinel**: `rm -f ~/.claude/watchers/${WORKSPACE_KEY}-plan-ready`
-- Poll: 15s (plans typically ready within minutes)
-- Max: 30min
-- Ping message: "Plan ready for review! Check Conductor."
 
-**How it works:** The ExitPlanMode PostToolUse hook in `~/.claude/settings.json` touches `~/.claude/watchers/<workspace-key>-plan-ready` when any agent finishes a plan. The watcher detects this file and pings.
+### A local build / long task in this shell
 
-**Important:** Replace `<absolute-workspace-pwd>` with the actual `$PWD` of the workspace that will produce the plan (the directory where the planning agent is running), NOT the watcher's own `$PWD`.
+Point CHECK_CMD at whatever signals completion — a sentinel file the task touches, a log line, or the task's own exit via `USE_EXIT_CODE=1` wrapping the command.
 
-### Generic "wait for command to succeed"
+## Notes
 
-User provides the command. Agent runs it, checks exit code.
-- Success: exit code 0
-- Failure: exit code non-zero after all retries
-- Poll: user-specified or 30s
-
-## Cleanup behavior
-
-Tracking is scoped per workspace: `~/.claude/watchers/<md5-of-cwd>.txt`. Each workspace only cleans up its own watchers — a watcher spawned from `san-jose-v1` won't be stopped by an invocation from `dubai-v1`.
-
-If the user wants MULTIPLE concurrent watchers from the same workspace, skip cleanup and warn that they'll accumulate until next invocation.
-
-## Output to user
-
-After launching, report:
-
-```
-Watcher spawned: <session-id>
-Monitoring: <what>
-RC session: <name>
-Cleaned up: <N> old watcher(s) (or "none")
-
-Manage:
-  claude logs <id>     — check progress
-  claude stop <id>     — cancel
-  claude attach <id>   — take over interactively
-```
+- The watcher always sends *something* (success, failure, or a timeout message after `MAX_MINUTES`), so a ping never silently disappears.
+- Keep messages short and specific — they land as a phone Slack notification.
+- Multiple watchers can run at once; each is its own background PID. There is no shared cleanup, so tell the user the PID if they may want to cancel it.
+- The old Remote-Control/Claude implementation is preserved at `SKILL.md.remote-control.bak` if it is ever needed again.
