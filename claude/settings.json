@@ -1,5 +1,5 @@
 {
-  "model": "opus[1m]",
+  "model": "sonnet",
   "hooks": {
     "SessionStart": [
       {
@@ -130,5 +130,33 @@
   },
   "skipDangerousModePermissionPrompt": true,
   "inputNeededNotifEnabled": true,
-  "agentPushNotifEnabled": true
+  "agentPushNotifEnabled": true,
+  "autoMode": {
+    "environment": [
+      "### Org-wide",
+      "**Organization**: team-plain (GitHub org observed across sibling repos and CLI names such as `plain-internal-cli`) — scoped to this user's own repos only, since this project's repo has no remote",
+      "**Cloud provider(s)**: AWS (aws, pulumi, plain-github-aws-account-mappings config references)",
+      "**Repository visibility**: Not queryable — this project (~/Users/thinhtran) has no tracked files and no git remote; assume private per shipped default",
+      "**Internal sharing / snippet hosting**: None configured — treat public paste/gist services as outside the trust boundary",
+      "**Secrets management**: AWS Secrets Manager (`aws secretsmanager` marker found in repo-wide config scan)",
+      "**Default / protected branches**: Not queryable — no remote configured for this repo",
+      "**CI/CD deploy targets**: None configured",
+      "**Network posture**: None configured",
+      "**Source control**: The trusted repo and its remote(s) only — this repo has no remote configured; no additional orgs configured",
+      "**Trusted internal domains**: None configured",
+      "**Trusted cloud buckets**: plain-github-aws-account-mappings (config-derived — not a confirmed upload destination; uploads of local data still require confirmation)",
+      "**Key internal services**: None configured",
+      "**Internal package registry**: None configured",
+      "**Sensitive data locations & audiences**: any file or store holding personal data, confidential business data, credentials, regulated data, or similarly sensitive material; preserve exact handles when known and share only with audiences cleared at the [named+specifics] bar",
+      "**Data retention / declassification**: None configured",
+      "**Sensitive remote targets**: any namespace, host, or container whose name carries `prod` or `production` as a whole word or name segment (hyphen/underscore/dot-delimited)",
+      "**Protected deployment namespaces / environments**: None configured — fall back to the Sensitive remote targets heuristic",
+      "**Protected IaC scopes**: IAM, RBAC, networking, quota, and node-pool resources; anything whose name or tag carries `prod` or `production` as a whole word or name segment",
+      "### User-specific",
+      "**Primary use of Claude Code**: software development, platform engineering work at Plain.com (per ~/.claude/CLAUDE.md)",
+      "**Trusted repo**: The git repository the agent started in (/Users/thinhtran) — currently has zero tracked files and no configured remote; no other repo is in scope for this session",
+      "**Org-specific CLIs**: plain-internal, plain-internal-cli, pulumi, sw, k9s (observed frequently in shell history; scoped to this user's own usage, not corroborated as org policy)",
+      "**Trusted repo routine-under qualifiers**: none — no remote or tracked content to scope a prefix to"
+    ]
+  }
 }
