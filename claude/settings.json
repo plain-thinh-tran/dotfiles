@@ -1,5 +1,6 @@
 {
   "model": "sonnet",
+  "outputStyle": "Concise",
   "hooks": {
     "SessionStart": [
       {
