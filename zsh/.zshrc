@@ -173,3 +173,4 @@ export PLAIN_TOOLBOX_DIR="$HOME/workspace/toolbox"
 [ -f "$PLAIN_TOOLBOX_DIR/src/database/index.sh" ] && source "$PLAIN_TOOLBOX_DIR/src/database/index.sh"
 [ -f "$PLAIN_TOOLBOX_DIR/src/git/index.sh" ] && source "$PLAIN_TOOLBOX_DIR/src/git/index.sh"
 # <<< Plain Toolbox <<<
+export PATH="$HOME/Library/pnpm/bin:$PATH"
