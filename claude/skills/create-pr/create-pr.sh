@@ -84,7 +84,9 @@ if ! printf '%s' "$BRANCH" | grep -Eq "^${LINEAR_ID}/"; then
 fi
 
 # 3. commit all changes if the tree is dirty
-if ! git diff --quiet || ! git diff --cached --quiet; then
+# --porcelain, not git diff: git diff cannot see untracked files, so a change that only adds new
+# files reads as a clean tree and never gets committed.
+if [ -n "$(git status --porcelain)" ]; then
   git add -A
   git commit -m "${COMMIT_MSG:-$TITLE}"
 fi
@@ -111,7 +113,7 @@ if [ -f package.json ]; then
         echo "skipping $script (not defined in package.json)"
       fi
     done
-    if ! git diff --quiet; then
+    if [ -n "$(git status --porcelain)" ]; then
       git add -A && git commit -m "chore: format:fix"
     fi
   fi
