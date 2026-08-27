@@ -41,17 +41,21 @@ Then decide:
 | Broken on main too, no fix | Fix the test, commit, push, resume monitoring |
 | Flaky / unrelated | Rerun failed jobs, resume monitoring |
 | `Deploy / Deploy SST Stage` failed | Run `deploy-doctor.py`, see below |
+| Stack CREATE fails with "Validation failed" | Run `deploy-doctor.py orphans`, see below |
 
 Known flaky: `Email E2E Test` (the script auto-reruns this one).
 
 ## Deploy failures on a PR stage
 
+You have AWS `devlocal` profile access to modify or delete CloudFormation stacks, SSM parameters, SQS queues, and other infra resources. Fix infra problems yourself; do not ask the user unless it requires a code change or is beyond what deploy-doctor and direct AWS access can resolve.
+
 `Deploy / Deploy SST Stage` failing almost never means the PR's code is wrong. `Setup` failing alongside it is not a second failure; it gates the integration test workflow on the deploy and its whole log is `Deploy / Deploy SST Stage completed with conclusion: failure`. Diagnose the deploy, ignore `Setup`.
 
-`deploy-doctor.py` covers the two environment failures that cost the most time. Both are read-only by default.
+`deploy-doctor.py` covers three environment failures that cost the most time. All are read-only by default.
 
 ```bash
 ./deploy-doctor.py drift -s pr-indigo --profile devlocal [--repair]
+./deploy-doctor.py orphans -s pr-indigo --stack CoreApiStack --profile devlocal [--repair]
 ./deploy-doctor.py artifact -r <run-id> [--fix]
 ```
 
@@ -64,6 +68,18 @@ Cause: the queues were deleted outside CloudFormation. The state stacks holding 
 `drift --repair` recreates them from the stack templates, reusing the exact names. Queue ARNs derive from names, so existing SNS subscriptions and S3 bucket notification configs, which survive the queue deletion, wire straight back up. It also reapplies the `AWS::SQS::QueuePolicy` documents, which die with the queue and would otherwise leave S3 and SNS unable to send.
 
 Check the whole stage, not just the queues named in the error log. Only the queues with a failing event source mapping show up there; others drift silently until something references them.
+
+After `drift --repair`, stacks that were in `ROLLBACK_COMPLETE` may have been deleted by `pre-deploy-cleanup`. SST then tries to UPDATE them but they no longer exist, failing with `Stack [name] does not exist`. A `--failed` rerun hits the same error. Use a full rerun (`gh run rerun <id>`, not `gh run rerun <id> --failed`) so SST issues a CREATE instead of an UPDATE.
+
+### Orphaned Named Resources (Validation Failed)
+
+Symptom: a stack (typically `CoreApiStack`) fails CREATE with `Validation failed with N error(s)` and immediately rolls back. No resource-level events appear in CloudFormation; no resources are attempted. The template validates fine standalone.
+
+Cause: the stack was previously deleted (manually or by cleanup), but some of its named resources survived. SSM parameters are the most common orphans since they aren't deleted when a `ROLLBACK_COMPLETE` stack is removed. CloudFormation rejects the CREATE because the named resources already exist outside the stack.
+
+`orphans --repair` finds the template (from the failed stack or CDK assets bucket), extracts hardcoded resource names, checks which ones exist in AWS, deletes the orphans, and cleans up the `ROLLBACK_COMPLETE` stack. Covers SSM parameters, Lambda functions, and API Gateway V2 APIs.
+
+Diagnosis shortcut: if the deploy log shows `Validation failed with 2 error(s)` and only 4 stack-level events (CREATE_IN_PROGRESS, CREATE_FAILED, ROLLBACK_IN_PROGRESS, ROLLBACK_COMPLETE), it's almost certainly orphaned resources.
 
 ### Artifact 404
 

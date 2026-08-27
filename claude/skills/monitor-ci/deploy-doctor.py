@@ -2,8 +2,8 @@
 """
 deploy-doctor - diagnose and repair SST PR-stage deploy failures.
 
-Two failure modes that look like "the deploy is broken" but are not caused by
-the PR's code. Both waste a lot of time if you retrigger instead of diagnosing.
+Three failure modes that look like "the deploy is broken" but are not caused by
+the PR's code. All waste a lot of time if you retrigger instead of diagnosing.
 
   drift     CloudFormation still believes SQS queues exist, but they were
             deleted out of band. Every deploy then fails creating Lambda event
@@ -12,13 +12,20 @@ the PR's code. Both waste a lot of time if you retrigger instead of diagnosing.
             fix it: pre-deploy-cleanup only deletes stacks in a failed state,
             and the state stacks holding the queues look healthy.
 
+  orphans   A stack was deleted (manually or by pre-deploy-cleanup) but some of
+            its named resources (SSM parameters, Lambda functions, API Gateways)
+            survived. CloudFormation CREATE then fails with "Validation failed
+            with N error(s)" before creating any resources, because the named
+            resources already exist outside the stack. No resource-level events
+            appear; the failure is at template validation time.
+
   artifact  The SST build artifact from an earlier run attempt can no longer be
             downloaded ("404 Not Found: workflow run not found" from
             GetSignedArtifactURL), while it still lists as present, so the
             check job keeps skipping the build and the deploy keeps trying to
             download something it cannot fetch.
 
-Both default to read-only. Pass --repair / --fix to act.
+All default to read-only. Pass --repair / --fix to act.
 """
 
 import argparse
@@ -338,6 +345,218 @@ def cmd_drift(args):
     return 1
 
 
+# -------------------------------------------------------------- orphans
+
+NAMED_RESOURCE_TYPES = {
+    "AWS::SSM::Parameter": "Name",
+    "AWS::Lambda::Function": "FunctionName",
+    "AWS::ApiGatewayV2::Api": "Name",
+}
+
+
+def _extract_named_resources(template):
+    """Return [(resource_type, name)] for resources with hardcoded names."""
+    resources = template.get("Resources", {})
+    out = []
+    for _logical, res in resources.items():
+        rtype = res.get("Type", "")
+        name_key = NAMED_RESOURCE_TYPES.get(rtype)
+        if not name_key:
+            continue
+        name = res.get("Properties", {}).get(name_key)
+        if isinstance(name, str):
+            out.append((rtype, name))
+    return out
+
+
+def _resource_exists(rtype, name, profile, region):
+    """Check if a named resource exists in AWS."""
+    try:
+        if rtype == "AWS::SSM::Parameter":
+            aws(["ssm", "get-parameter", "--name", name], profile, region)
+            return True
+        if rtype == "AWS::Lambda::Function":
+            aws(["lambda", "get-function", "--function-name", name], profile, region)
+            return True
+        if rtype == "AWS::ApiGatewayV2::Api":
+            data = aws(["apigatewayv2", "get-apis"], profile, region)
+            return any(a.get("Name") == name for a in data.get("Items", []))
+    except RuntimeError:
+        return False
+    return False
+
+
+def _delete_resource(rtype, name, profile, region):
+    """Delete a named resource from AWS."""
+    if rtype == "AWS::SSM::Parameter":
+        aws(["ssm", "delete-parameter", "--name", name], profile, region)
+    elif rtype == "AWS::Lambda::Function":
+        aws(["lambda", "delete-function", "--function-name", name], profile, region)
+    elif rtype == "AWS::ApiGatewayV2::Api":
+        data = aws(["apigatewayv2", "get-apis"], profile, region)
+        for a in data.get("Items", []):
+            if a.get("Name") == name:
+                aws(
+                    ["apigatewayv2", "delete-api", "--api-id", a["ApiId"]],
+                    profile,
+                    region,
+                )
+                break
+
+
+def find_orphans(stage, stack_name, profile, region):
+    """Find named resources that exist in AWS but whose stack is gone or ROLLBACK_COMPLETE."""
+    # Get the template from the CDK assets bucket
+    cdk_data = aws(
+        [
+            "cloudformation",
+            "describe-stacks",
+            "--stack-name",
+            "CDKToolkit",
+            "--query",
+            "Stacks[0].Outputs[?OutputKey=='BucketName'].OutputValue",
+        ],
+        profile,
+        region,
+    )
+    if not cdk_data:
+        raise Unresolved("CDKToolkit stack not found or has no BucketName output")
+    bucket = cdk_data[0]
+
+    # Check if the stack exists and what state it's in
+    full_name = f"{stage}-services-{stack_name}"
+    stack_data = aws(
+        ["cloudformation", "describe-stacks", "--stack-name", full_name],
+        profile,
+        region,
+        check=False,
+    )
+
+    template = None
+    if stack_data and "Stacks" in stack_data:
+        stack_status = stack_data["Stacks"][0]["StackStatus"]
+        if stack_status in ("ROLLBACK_COMPLETE", "CREATE_FAILED"):
+            # Get template from the failed stack
+            tmpl_data = aws(
+                [
+                    "cloudformation",
+                    "get-template",
+                    "--stack-name",
+                    full_name,
+                    "--query",
+                    "TemplateBody",
+                ],
+                profile,
+                region,
+                check=False,
+            )
+            if tmpl_data:
+                template = tmpl_data if isinstance(tmpl_data, dict) else json.loads(tmpl_data)
+    else:
+        # Stack doesn't exist; find the template in the CDK assets bucket by
+        # looking for recent large JSON files (stack templates are typically >50KB)
+        listing = sh(
+            ["aws"]
+            + (["--profile", profile] if profile else [])
+            + ["--region", region, "s3", "ls", f"s3://{bucket}/", "--recursive"],
+            check=False,
+        )
+        # Find JSON files, sort by date descending, pick candidates
+        candidates = []
+        for line in listing.strip().split("\n"):
+            if not line or not line.strip():
+                continue
+            parts = line.split()
+            if len(parts) < 4:
+                continue
+            size = int(parts[2])
+            key = parts[3]
+            if key.endswith(".json") and size > 50000:
+                candidates.append((parts[0] + " " + parts[1], size, key))
+        candidates.sort(reverse=True)
+
+        for _, _, key in candidates[:10]:
+            content = sh(
+                ["aws"]
+                + (["--profile", profile] if profile else [])
+                + ["--region", region, "s3", "cp", f"s3://{bucket}/{key}", "-"],
+                check=False,
+            )
+            try:
+                tmpl = json.loads(content)
+            except (json.JSONDecodeError, TypeError):
+                continue
+            named = _extract_named_resources(tmpl)
+            if any(stage in name for _, name in named):
+                template = tmpl
+                break
+
+    if not template:
+        print(f"Could not find template for {full_name}.")
+        return []
+
+    named = _extract_named_resources(template)
+    orphans = []
+    for rtype, name in named:
+        if _resource_exists(rtype, name, profile, region):
+            orphans.append((rtype, name))
+    return orphans
+
+
+def cmd_orphans(args):
+    orphans = find_orphans(args.stage, args.stack, args.profile, args.region)
+    if not orphans:
+        print(f"No orphaned resources for {args.stage}-services-{args.stack}.")
+        return 0
+
+    print(f"{len(orphans)} orphaned resource(s) blocking stack CREATE:\n")
+    for rtype, name in orphans:
+        short_type = rtype.rsplit("::", 1)[-1]
+        print(f"  {short_type}: {name}")
+    print()
+
+    if not args.repair:
+        print("Dry run. Re-run with --repair to delete them.")
+        return 1
+
+    full_name = f"{args.stage}-services-{args.stack}"
+    # Delete the ROLLBACK_COMPLETE stack first if it exists
+    stack_data = aws(
+        ["cloudformation", "describe-stacks", "--stack-name", full_name],
+        args.profile,
+        args.region,
+        check=False,
+    )
+    if stack_data and "Stacks" in stack_data:
+        status = stack_data["Stacks"][0]["StackStatus"]
+        if status in ("ROLLBACK_COMPLETE", "CREATE_FAILED"):
+            print(f"Deleting {full_name} ({status})...")
+            aws(
+                ["cloudformation", "delete-stack", "--stack-name", full_name],
+                args.profile,
+                args.region,
+            )
+            aws(
+                [
+                    "cloudformation",
+                    "wait",
+                    "stack-delete-complete",
+                    "--stack-name",
+                    full_name,
+                ],
+                args.profile,
+                args.region,
+            )
+
+    for rtype, name in orphans:
+        short_type = rtype.rsplit("::", 1)[-1]
+        print(f"  deleting {short_type}: {name}")
+        _delete_resource(rtype, name, args.profile, args.region)
+
+    print(f"\nDeleted {len(orphans)} orphaned resource(s). Rerun the deploy.")
+    return 0
+
+
 # -------------------------------------------------------------- artifact
 
 ARTIFACT_404 = "GetSignedArtifactURL"
@@ -390,6 +609,14 @@ def main():
     d.add_argument("--region", default="eu-west-2")
     d.add_argument("--repair", action="store_true", help="actually recreate them")
     d.set_defaults(func=cmd_drift)
+
+    o = sub.add_parser("orphans", help="named resources orphaned after stack deletion")
+    o.add_argument("-s", "--stage", required=True, help="e.g. pr-indigo")
+    o.add_argument("--stack", required=True, help="stack name without stage prefix, e.g. CoreApiStack")
+    o.add_argument("--profile", default=None, help="AWS profile (default: env)")
+    o.add_argument("--region", default="eu-west-2")
+    o.add_argument("--repair", action="store_true", help="delete orphans and clean up stack")
+    o.set_defaults(func=cmd_orphans)
 
     a = sub.add_parser("artifact", help="stale SST build artifact 404")
     a.add_argument("-r", "--run", required=True, help="workflow run id")

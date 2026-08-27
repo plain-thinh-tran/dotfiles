@@ -46,10 +46,29 @@ fi
 [ -n "$PR" ] || die "no PR found for current branch; pass -p <PR>"
 
 # checks JSON, minus the Mergify gate
+REPO="$(gh repo view --json nameWithOwner --jq '.nameWithOwner' 2>/dev/null || echo 'team-plain/services')"
+
+pr_head_sha() {
+  gh pr view "$PR" --json headRefOid --jq '.headRefOid' 2>/dev/null
+}
+
 checks_json() {
   gh pr checks "$PR" --json name,state,link 2>/dev/null \
     | jq '[.[] | select(.name != "Mergify Merge Protections")]'
 }
+
+# Check if a failed job belongs to the current HEAD commit.
+# Returns 0 (true) if stale, 1 (false) if current.
+is_stale_check() {
+  local link="$1" head_sha="$2"
+  local run_id
+  run_id="$(printf '%s' "$link" | sed -nE 's#.*/actions/runs/([0-9]+).*#\1#p')"
+  [ -n "$run_id" ] || return 1
+  local run_sha
+  run_sha="$(gh api "repos/${REPO}/actions/runs/${run_id}" --jq '.head_sha' 2>/dev/null || true)"
+  [ -n "$run_sha" ] && [ "$run_sha" != "$head_sha" ]
+}
+
 run_id_from_link() { printf '%s' "$1" | sed -nE 's#.*/actions/runs/([0-9]+).*#\1#p'; }
 
 reruns=0
@@ -80,6 +99,33 @@ while :; do
 
   # real failure: nothing else still pending
   if [ "$failed" -gt 0 ] && [ "$pending" -eq 0 ]; then
+    # Filter out stale failures from old commits
+    head_sha="$(pr_head_sha)"
+    if [ -n "$head_sha" ]; then
+      current_failed_json="$(printf '%s' "$failed_json" | jq -c '.[]' | while IFS= read -r item; do
+        link="$(printf '%s' "$item" | jq -r '.link')"
+        if ! is_stale_check "$link" "$head_sha"; then
+          printf '%s\n' "$item"
+        else
+          name="$(printf '%s' "$item" | jq -r '.name')"
+          echo "⏭ skipping stale failure: $name (from older commit)" >&2
+        fi
+      done | jq -s '.')"
+      failed_json="$current_failed_json"
+      failed="$(printf '%s' "$failed_json" | jq 'length')"
+    fi
+
+    # Re-check: if all failures were stale, keep polling
+    if [ "$failed" -eq 0 ]; then
+      echo "ℹ all failures were from older commits — waiting for current run"
+      if [ $((now - start)) -ge "$TIMEOUT" ]; then
+        echo "⏱ timeout after ${TIMEOUT}s — stopping"
+        exit 2
+      fi
+      sleep "$INTERVAL"
+      continue
+    fi
+
     nonflaky="$(printf '%s' "$failed_json" | jq --arg re "$KNOWN_FLAKY_REGEX" '[.[] | select(.name | test($re) | not)] | length')"
     if [ "$nonflaky" -gt 0 ]; then
       echo "❌ non-flaky failure(s) — stopping for analysis (never blind retrigger):"
