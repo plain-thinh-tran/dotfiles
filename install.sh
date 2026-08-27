@@ -42,8 +42,7 @@ if ! command -v brew &>/dev/null; then
 fi
 
 brew_before=$(mktemp)
-brew list --formula > "$brew_before" 2>/dev/null || true
-brew list --cask >> "$brew_before" 2>/dev/null || true
+{ brew list --formula 2>/dev/null; brew list --cask 2>/dev/null; } | sort > "$brew_before"
 
 info "Updating Homebrew..."
 run brew update
@@ -52,8 +51,7 @@ info "Installing Homebrew packages..."
 run brew bundle --file="$DOTFILES_DIR/Brewfile"
 
 brew_after=$(mktemp)
-brew list --formula > "$brew_after" 2>/dev/null || true
-brew list --cask >> "$brew_after" 2>/dev/null || true
+{ brew list --formula 2>/dev/null; brew list --cask 2>/dev/null; } | sort > "$brew_after"
 
 brew_diff=$(diff "$brew_before" "$brew_after" || true)
 if [ -n "$brew_diff" ]; then
