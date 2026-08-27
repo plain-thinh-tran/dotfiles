@@ -93,6 +93,14 @@ while :; do
 
   # all green
   if [ "$total" -gt 0 ] && [ "$failed" -eq 0 ] && [ "$pending" -eq 0 ]; then
+    deploy_skipped="$(printf '%s' "$json" | jq '[.[] | select((.name | test("Deploy.*SST|Deploy plain")) and .state=="SKIPPED")] | length')"
+    if [ "$deploy_skipped" -gt 0 ]; then
+      echo "⚠️  deploy checks were SKIPPED (not run). Integration tests ran against a non-existent or stale environment."
+      echo ""
+      echo "Common cause: empty commit or only-ignored-files change while a GitHub deployment record exists."
+      echo "Fix: push a commit with real file changes (e.g. rebase on main) to trigger a full deploy."
+      exit 1
+    fi
     echo "✅ all checks passed"
     exit 0
   fi
@@ -130,6 +138,39 @@ while :; do
     if [ "$nonflaky" -gt 0 ]; then
       echo "❌ non-flaky failure(s) — stopping for analysis (never blind retrigger):"
       printf '%s' "$failed_json" | jq -r '.[] | "  - \(.name): \(.link)"'
+
+      deploy_link="$(printf '%s' "$failed_json" | jq -r '.[] | select(.name | test("Deploy.*SST")) | .link' | head -1)"
+      if [ -n "$deploy_link" ]; then
+        deploy_job_id="$(printf '%s' "$deploy_link" | sed -nE 's#.*/job/([0-9]+).*#\1#p')"
+        if [ -n "$deploy_job_id" ]; then
+          deploy_log="$(gh run view --job "$deploy_job_id" --log-failed 2>/dev/null || true)"
+          if [ -n "$deploy_log" ]; then
+            echo ""
+            echo "🔍 Deploy failure diagnosis:"
+            if printf '%s' "$deploy_log" | grep -q "NonExistentQueue"; then
+              echo "  → SQS queue drift detected (queues deleted outside CloudFormation)"
+              echo "  → Fix: deploy-doctor.py drift -s <stage> --profile devlocal --repair"
+            fi
+            if printf '%s' "$deploy_log" | grep -q "GetSignedArtifactURL"; then
+              echo "  → Stale build artifact (404 on download)"
+              echo "  → Fix: deploy-doctor.py artifact -r <run-id> --fix"
+            fi
+            if printf '%s' "$deploy_log" | grep -q "DELETE_IN_PROGRESS state and can not be updated"; then
+              echo "  → Stack stuck in DELETE_IN_PROGRESS (likely Step Functions executions blocking delete)"
+              echo "  → Fix: stop all running executions on the state machine, then rerun deploy"
+            fi
+            if printf '%s' "$deploy_log" | grep -qE "Function not found:.*Lambda"; then
+              echo "  → Phantom Lambda resource (CFN thinks it exists but Lambda API says no)"
+              echo "  → Fix: deploy-doctor.py phantoms -s <stage> --profile devlocal --repair"
+            fi
+            if printf '%s' "$deploy_log" | grep -q "UPDATE_ROLLBACK_FAILED"; then
+              echo "  → Stack stuck in UPDATE_ROLLBACK_FAILED"
+              echo "  → Fix: aws cloudformation continue-update-rollback --resources-to-skip <logical-ids> (use full CDK IDs with hash suffixes)"
+            fi
+          fi
+        fi
+      fi
+
       exit 1
     fi
     if [ "$reruns" -ge "$MAX_RERUNS" ]; then

@@ -2,7 +2,7 @@
 """
 deploy-doctor - diagnose and repair SST PR-stage deploy failures.
 
-Three failure modes that look like "the deploy is broken" but are not caused by
+Six failure modes that look like "the deploy is broken" but are not caused by
 the PR's code. All waste a lot of time if you retrigger instead of diagnosing.
 
   drift     CloudFormation still believes SQS queues exist, but they were
@@ -19,6 +19,24 @@ the PR's code. All waste a lot of time if you retrigger instead of diagnosing.
             resources already exist outside the stack. No resource-level events
             appear; the failure is at template validation time.
 
+  phantoms  CloudFormation believes Lambda functions exist (stack shows
+            CREATE_COMPLETE) but the functions were deleted. Other stacks that
+            reference those Lambdas (permissions, integrations) fail with
+            "Function not found". The affected stacks need to be deleted so
+            SST can recreate them on the next deploy.
+
+  stuck-delete
+            A stack is stuck in DELETE_IN_PROGRESS because a Step Functions
+            state machine has running executions that block CloudFormation
+            from deleting it. Stops all executions, then waits for the delete
+            to complete.
+
+  rollback-fix
+            A stack is stuck in UPDATE_ROLLBACK_FAILED because resources it
+            tried to roll back no longer exist (phantom resources). Reads the
+            failing logical resource IDs from stack events and calls
+            continue-update-rollback with --resources-to-skip to unblock it.
+
   artifact  The SST build artifact from an earlier run attempt can no longer be
             downloaded ("404 Not Found: workflow run not found" from
             GetSignedArtifactURL), while it still lists as present, so the
@@ -26,12 +44,15 @@ the PR's code. All waste a lot of time if you retrigger instead of diagnosing.
             download something it cannot fetch.
 
 All default to read-only. Pass --repair / --fix to act.
+Hardwired to the devlocal AWS profile. No other profile is accepted.
 """
 
 import argparse
 import json
 import subprocess
 import sys
+
+REQUIRED_PROFILE = "devlocal"
 
 QUEUE = "AWS::SQS::Queue"
 QUEUE_POLICY = "AWS::SQS::QueuePolicy"
@@ -52,9 +73,11 @@ def sh(args, check=True):
 
 
 def aws(args, profile, region, check=True):
-    base = ["aws"]
-    if profile:
-        base += ["--profile", profile]
+    if profile is not None and profile != REQUIRED_PROFILE:
+        raise RuntimeError(
+            f"deploy-doctor only runs against the {REQUIRED_PROFILE} profile, got: {profile}"
+        )
+    base = ["aws", "--profile", REQUIRED_PROFILE]
     if region:
         base += ["--region", region]
     out = sh(base + args + ["--output", "json"], check=check)
@@ -340,9 +363,183 @@ def cmd_drift(args):
 
     if args.repair:
         left = find_drift(args.stage, args.profile, args.region)
-        print(f"\n{len(left)} still missing." if left else "\nAll queues restored.")
-        return 1 if left else 0
+        if left:
+            print(f"\n{len(left)} still missing.")
+            return 1
+        print("\nAll queues restored.")
+
+        rollback_stacks = [
+            name for name, status in stage_stacks(args.stage, args.profile, args.region)
+            if status == "ROLLBACK_COMPLETE"
+        ]
+        if rollback_stacks:
+            print(f"\nCleaning up {len(rollback_stacks)} ROLLBACK_COMPLETE stack(s):")
+            for stack in rollback_stacks:
+                print(f"  deleting {stack}...")
+                aws(
+                    ["cloudformation", "delete-stack", "--stack-name", stack],
+                    args.profile, args.region,
+                )
+                aws(
+                    ["cloudformation", "wait", "stack-delete-complete", "--stack-name", stack],
+                    args.profile, args.region, check=False,
+                )
+            print("Done. SST will CREATE these stacks on the next deploy.")
+        return 0
     return 1
+
+
+# ----------------------------------------------------------- stuck-delete
+
+
+STATE_MACHINE = "AWS::StepFunctions::StateMachine"
+
+
+def cmd_stuck_delete(args):
+    stacks = stage_stacks(args.stage, args.profile, args.region)
+    stuck = [(name, status) for name, status in stacks if status == "DELETE_IN_PROGRESS"]
+    if not stuck:
+        print(f"No stacks stuck in DELETE_IN_PROGRESS on {args.stage}.")
+        return 0
+
+    print(f"{len(stuck)} stack(s) in DELETE_IN_PROGRESS:\n")
+    total_executions = 0
+    blockers = []
+
+    for stack_name, _ in stuck:
+        try:
+            resources = stack_resources(stack_name, args.profile, args.region)
+        except RuntimeError:
+            print(f"  {stack_name}: could not list resources (may have just finished deleting)")
+            continue
+        for r in resources:
+            if r["ResourceType"] != STATE_MACHINE:
+                continue
+            if r["ResourceStatus"] != "DELETE_IN_PROGRESS":
+                continue
+            sm_arn = r["PhysicalResourceId"]
+            execs = aws(
+                [
+                    "stepfunctions", "list-executions",
+                    "--state-machine-arn", sm_arn,
+                    "--status-filter", "RUNNING",
+                    "--query", "executions[].executionArn",
+                ],
+                args.profile, args.region, check=False,
+            )
+            if execs:
+                count = len(execs)
+                total_executions += count
+                blockers.append((stack_name, sm_arn, execs))
+                print(f"  {stack_name}: {count} running execution(s) on state machine")
+                print(f"    {sm_arn}")
+
+    if not blockers:
+        print("  No Step Functions executions blocking the delete(s). Waiting for CFN to finish.")
+        return 0
+
+    print(f"\n{total_executions} total running execution(s) blocking delete.\n")
+
+    if not args.repair:
+        print("Dry run. Re-run with --repair to stop executions and unblock the delete(s).")
+        return 1
+
+    for stack_name, sm_arn, execs in blockers:
+        print(f"  stopping {len(execs)} execution(s) on {sm_arn}...")
+        for arn in execs:
+            aws(
+                [
+                    "stepfunctions", "stop-execution",
+                    "--execution-arn", arn,
+                    "--cause", "deploy-doctor stuck-delete",
+                ],
+                args.profile, args.region, check=False,
+            )
+        print(f"    stopped.")
+
+    print("\nWaiting for stack delete(s) to complete...")
+    for stack_name, _ in stuck:
+        aws(
+            ["cloudformation", "wait", "stack-delete-complete", "--stack-name", stack_name],
+            args.profile, args.region, check=False,
+        )
+        print(f"  {stack_name}: deleted.")
+
+    print("\nAll stuck stacks unblocked and deleted.")
+    return 0
+
+
+# ---------------------------------------------------------- rollback-fix
+
+
+def cmd_rollback_fix(args):
+    stacks = stage_stacks(args.stage, args.profile, args.region)
+    stuck = [(name, status) for name, status in stacks if status == "UPDATE_ROLLBACK_FAILED"]
+    if not stuck:
+        print(f"No stacks in UPDATE_ROLLBACK_FAILED on {args.stage}.")
+        return 0
+
+    print(f"{len(stuck)} stack(s) in UPDATE_ROLLBACK_FAILED:\n")
+
+    for stack_name, _ in stuck:
+        events = aws(
+            [
+                "cloudformation", "describe-stack-events",
+                "--stack-name", stack_name,
+                "--query", "StackEvents[?ResourceStatus=='UPDATE_FAILED'].[LogicalResourceId,ResourceStatusReason]",
+            ],
+            args.profile, args.region,
+        )
+        failing = [
+            (lid, reason) for lid, reason in events
+            if lid != stack_name and "do not belong to stack" not in (reason or "")
+        ]
+        if not failing:
+            print(f"  {stack_name}: no failing resources found in events, skipping")
+            continue
+
+        logical_ids = list(dict.fromkeys(lid for lid, _ in failing))
+        print(f"  {stack_name}: {len(logical_ids)} failing resource(s):")
+        for lid, reason in failing:
+            short_reason = (reason or "")[:120]
+            print(f"    {lid}: {short_reason}")
+
+        if not args.repair:
+            continue
+
+        print(f"  issuing continue-update-rollback --resources-to-skip ...")
+        aws(
+            [
+                "cloudformation", "continue-update-rollback",
+                "--stack-name", stack_name,
+                "--resources-to-skip",
+            ] + logical_ids,
+            args.profile, args.region,
+        )
+        print(f"  waiting for rollback to complete...")
+        aws(
+            [
+                "cloudformation", "wait", "stack-rollback-complete",
+                "--stack-name", stack_name,
+            ],
+            args.profile, args.region, check=False,
+        )
+        final = aws(
+            [
+                "cloudformation", "describe-stacks",
+                "--stack-name", stack_name,
+                "--query", "Stacks[0].StackStatus",
+            ],
+            args.profile, args.region, check=False,
+        )
+        print(f"  {stack_name}: {final}")
+
+    if not args.repair:
+        print("\nDry run. Re-run with --repair to issue continue-update-rollback.")
+        return 1
+
+    print("\nDone.")
+    return 0
 
 
 # -------------------------------------------------------------- orphans
@@ -457,7 +654,7 @@ def find_orphans(stage, stack_name, profile, region):
         # looking for recent large JSON files (stack templates are typically >50KB)
         listing = sh(
             ["aws"]
-            + (["--profile", profile] if profile else [])
+            + ["--profile", REQUIRED_PROFILE]
             + ["--region", region, "s3", "ls", f"s3://{bucket}/", "--recursive"],
             check=False,
         )
@@ -478,7 +675,7 @@ def find_orphans(stage, stack_name, profile, region):
         for _, _, key in candidates[:10]:
             content = sh(
                 ["aws"]
-                + (["--profile", profile] if profile else [])
+                + ["--profile", REQUIRED_PROFILE]
                 + ["--region", region, "s3", "cp", f"s3://{bucket}/{key}", "-"],
                 check=False,
             )
@@ -557,6 +754,90 @@ def cmd_orphans(args):
     return 0
 
 
+# ------------------------------------------------------------- phantoms
+
+
+LAMBDA = "AWS::Lambda::Function"
+
+
+def find_phantoms(stage, profile, region):
+    """Return [(stack, logical_id, function_name)] for Lambdas CFN has but Lambda API does not."""
+    phantoms = []
+    for stack, status in stage_stacks(stage, profile, region):
+        if status not in ("CREATE_COMPLETE", "UPDATE_COMPLETE", "UPDATE_ROLLBACK_COMPLETE"):
+            continue
+        for r in stack_resources(stack, profile, region):
+            if r["ResourceType"] != LAMBDA:
+                continue
+            fn_name = r["PhysicalResourceId"]
+            check = aws(
+                ["lambda", "get-function", "--function-name", fn_name],
+                profile,
+                region,
+                check=False,
+            )
+            if check is None:
+                phantoms.append((stack, r["LogicalResourceId"], fn_name))
+    return phantoms
+
+
+def cmd_phantoms(args):
+    phantoms = find_phantoms(args.stage, args.profile, args.region)
+    if not phantoms:
+        print(f"No phantom Lambdas on {args.stage}. CFN and Lambda API agree.")
+        return 0
+
+    by_stack = {}
+    for stack, logical, name in phantoms:
+        by_stack.setdefault(stack, []).append((logical, name))
+
+    print(f"{len(phantoms)} Lambda(s) CloudFormation believes exist but Lambda API does not:\n")
+    for stack, entries in by_stack.items():
+        print(f"  stack: {stack}")
+        for logical, name in entries:
+            print(f"    {name} (logical={logical})")
+    print()
+
+    if not args.repair:
+        print("Dry run. Re-run with --repair to delete the affected stacks.")
+        print("SST will recreate them (with the Lambdas) on the next deploy.")
+        return 1
+
+    for stack in by_stack:
+        print(f"  deleting {stack}...")
+        # Empty any S3 buckets in the stack first (non-empty buckets block delete)
+        for r in stack_resources(stack, args.profile, args.region):
+            if r["ResourceType"] == "AWS::S3::Bucket":
+                bucket = r["PhysicalResourceId"]
+                print(f"    emptying bucket {bucket}")
+                sh(
+                    ["aws"]
+                    + ["--profile", REQUIRED_PROFILE]
+                    + ["--region", args.region, "s3", "rm", f"s3://{bucket}", "--recursive"],
+                    check=False,
+                )
+        aws(
+            ["cloudformation", "delete-stack", "--stack-name", stack],
+            args.profile,
+            args.region,
+        )
+        aws(
+            [
+                "cloudformation",
+                "wait",
+                "stack-delete-complete",
+                "--stack-name",
+                stack,
+            ],
+            args.profile,
+            args.region,
+        )
+        print(f"    deleted.")
+
+    print(f"\nDeleted {len(by_stack)} stack(s). Rerun the deploy to recreate them.")
+    return 0
+
+
 # -------------------------------------------------------------- artifact
 
 ARTIFACT_404 = "GetSignedArtifactURL"
@@ -603,17 +884,40 @@ def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="cmd", required=True)
 
+    profile_args = {"default": REQUIRED_PROFILE, "help": f"AWS profile (hardwired to {REQUIRED_PROFILE})"}
+
     d = sub.add_parser("drift", help="SQS queues CFN thinks exist but do not")
     d.add_argument("-s", "--stage", required=True, help="e.g. pr-indigo")
-    d.add_argument("--profile", default=None, help="AWS profile (default: env)")
+    d.add_argument("--profile", **profile_args)
     d.add_argument("--region", default="eu-west-2")
     d.add_argument("--repair", action="store_true", help="actually recreate them")
     d.set_defaults(func=cmd_drift)
 
+    ph = sub.add_parser("phantoms", help="Lambda functions CFN thinks exist but were deleted")
+    ph.add_argument("-s", "--stage", required=True, help="e.g. pr-indigo")
+    ph.add_argument("--profile", **profile_args)
+    ph.add_argument("--region", default="eu-west-2")
+    ph.add_argument("--repair", action="store_true", help="delete affected stacks so SST recreates them")
+    ph.set_defaults(func=cmd_phantoms)
+
+    sd = sub.add_parser("stuck-delete", help="stacks stuck in DELETE_IN_PROGRESS (Step Functions blocking)")
+    sd.add_argument("-s", "--stage", required=True, help="e.g. pr-indigo")
+    sd.add_argument("--profile", **profile_args)
+    sd.add_argument("--region", default="eu-west-2")
+    sd.add_argument("--repair", action="store_true", help="stop executions and unblock deletes")
+    sd.set_defaults(func=cmd_stuck_delete)
+
+    rf = sub.add_parser("rollback-fix", help="stacks stuck in UPDATE_ROLLBACK_FAILED")
+    rf.add_argument("-s", "--stage", required=True, help="e.g. pr-indigo")
+    rf.add_argument("--profile", **profile_args)
+    rf.add_argument("--region", default="eu-west-2")
+    rf.add_argument("--repair", action="store_true", help="skip failing resources and complete rollback")
+    rf.set_defaults(func=cmd_rollback_fix)
+
     o = sub.add_parser("orphans", help="named resources orphaned after stack deletion")
     o.add_argument("-s", "--stage", required=True, help="e.g. pr-indigo")
     o.add_argument("--stack", required=True, help="stack name without stage prefix, e.g. CoreApiStack")
-    o.add_argument("--profile", default=None, help="AWS profile (default: env)")
+    o.add_argument("--profile", **profile_args)
     o.add_argument("--region", default="eu-west-2")
     o.add_argument("--repair", action="store_true", help="delete orphans and clean up stack")
     o.set_defaults(func=cmd_orphans)
