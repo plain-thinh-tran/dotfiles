@@ -1,5 +1,19 @@
 [user]
 	email = thinh.tran@plain.com
 	name = Thinh
+
 [safe]
 	directory = /Users/thinhtran/workspace/services
+
+[push]
+	autoSetupRemote = true
+	default = current
+
+[pull]
+	rebase = true
+
+[merge]
+	conflictStyle = zdiff3
+
+[url "git@github.com:"]
+	insteadOf = https://github.com/
