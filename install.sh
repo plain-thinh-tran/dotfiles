@@ -149,6 +149,17 @@ for skill_dir in "$DOTFILES_DIR/claude/skills/"*/; do
   done < <(find "$skill_dir" -type f)
 done
 
+MARKETPLACE_DIR="$HOME/workspace/plain-marketplace"
+if [ -d "$MARKETPLACE_DIR/plugins/skills" ]; then
+  info "Linking marketplace skills..."
+  for plugin_dir in "$MARKETPLACE_DIR/plugins/skills/"*/; do
+    plugin_name="$(basename "$plugin_dir")"
+    link "$plugin_dir" "$HOME/.claude/skills/$plugin_name"
+  done
+else
+  warn "plain-marketplace not found at $MARKETPLACE_DIR, skipping marketplace skills"
+fi
+
 if command -v claude &>/dev/null; then
   if jq -e '.plugins["caveman@caveman"]' "$HOME/.claude/plugins/installed_plugins.json" &>/dev/null; then
     info "Caveman already installed, skipping"
