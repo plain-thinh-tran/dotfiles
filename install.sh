@@ -32,6 +32,9 @@ if $DRY_RUN; then
   echo ""
 fi
 
+info "Initializing submodules..."
+run git -C "$DOTFILES_DIR" submodule update --init --recursive
+
 if ! command -v brew &>/dev/null; then
   if $DRY_RUN; then
     dry "install Homebrew"
@@ -148,6 +151,17 @@ for skill_dir in "$DOTFILES_DIR/claude/skills/"*/; do
     link "$file" "$dest_dir/${file#"$skill_dir"}"
   done < <(find "$skill_dir" -type f)
 done
+
+MATTPOCOCK_SKILLS="$DOTFILES_DIR/claude/vendor/mattpocock-skills/skills/productivity"
+if [ -d "$MATTPOCOCK_SKILLS" ]; then
+  info "Linking mattpocock skills..."
+  for skill_dir in "$MATTPOCOCK_SKILLS/"*/; do
+    skill_name="$(basename "$skill_dir")"
+    link "$skill_dir" "$HOME/.claude/skills/$skill_name"
+  done
+else
+  warn "mattpocock-skills submodule not found, run: git submodule update --init"
+fi
 
 MARKETPLACE_DIR="$HOME/workspace/plain-marketplace"
 if [ -d "$MARKETPLACE_DIR/plugins/skills" ]; then
