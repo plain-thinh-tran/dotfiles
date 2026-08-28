@@ -132,6 +132,12 @@
   "outputStyle": "Concise",
   "skipDangerousModePermissionPrompt": true,
   "inputNeededNotifEnabled": true,
+  "mcpServers": {
+    "lightpanda": {
+      "command": "lightpanda",
+      "args": ["mcp"]
+    }
+  },
   "agentPushNotifEnabled": true,
   "autoMode": {
     "environment": [

@@ -1,3 +1,4 @@
+tap "lightpanda-io/browser"
 tap "zdk/tools"
 
 brew "mas"
@@ -11,6 +12,7 @@ brew "gh"
 brew "jq"
 cask "1password-cli"
 brew "libpq"
+brew "lightpanda-io/browser/lightpanda"
 brew "lowfat"
 brew "node"
 brew "peon-ping"
