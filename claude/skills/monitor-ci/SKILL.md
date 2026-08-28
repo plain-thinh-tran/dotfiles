@@ -45,8 +45,10 @@ Then decide:
 | Stack stuck in DELETE_IN_PROGRESS | `deploy-doctor.py stuck-delete` |
 | Stack stuck in UPDATE_ROLLBACK_FAILED | `deploy-doctor.py rollback-fix` |
 | "Function not found" on a healthy stack | `deploy-doctor.py phantoms` |
+| `Deploy plain services` fails with state lock | Stale OpenTofu lock in DynamoDB; clear it (see below) |
 | Deploy checks SKIPPED | Empty commit or ignored-files-only change; rebase on main and push |
 | All integration tests fail with same DB error | Environment database is corrupt; nuke and redeploy (see below) |
+| All integration tests fail with 404s | `Deploy plain services` likely failed; fix that first |
 
 Known flaky: `Email E2E Test` (the script auto-reruns this one).
 
@@ -123,29 +125,86 @@ Cause: the artifact was uploaded on an early attempt and later attempts cannot r
 
 `artifact --fix` deletes the artifacts and triggers a **full** rerun. A `--failed` rerun is not enough: it skips the build job again and reproduces the 404.
 
+### Stale OpenTofu State Lock
+
+Symptom: `Deploy plain services` fails with `Error acquiring the state lock` and `operation error DynamoDB: PutItem`. Reruns hit the same error. Integration tests then fail with 404s because the plain services API endpoints aren't deployed.
+
+Cause: a dead CI runner left a lock in the `plain-tofu-state-lock` DynamoDB table. The lock never got released.
+
+Fix:
+
+```bash
+aws dynamodb scan --table-name plain-tofu-state-lock --profile devlocal --region eu-west-2 \
+  --filter-expression "contains(LockID, :stage)" \
+  --expression-attribute-values '{":stage":{"S":"pr-<stage>"}}'
+```
+
+Check the `Created` timestamp in the `Info` field. If stale (>30 min), delete:
+
+```bash
+aws dynamodb delete-item --table-name plain-tofu-state-lock --key \
+  '{"LockID":{"S":"plain-tofu-state-707421297763/env:/<stage>/plain-services/terraform.tfstate"}}' \
+  --profile devlocal --region eu-west-2
+```
+
+Then rerun the failed `Deploy plain services` job.
+
 ### Corrupt Environment (Nuke and Redeploy)
 
 Symptom: all integration test shards fail with the same database-level error (e.g. `customer_already_exists_with_external_id`), or multiple deploy-doctor subcommands are needed in sequence, or stacks have cascading phantom resources. The environment is too far gone for incremental repair.
 
 Always prefer cleaning up yourself using the `devlocal` AWS profile over triggering `pr-cleanup-manual.yml`. You have more control, can parallelize deletions, handle dependency ordering, empty S3 buckets, stop Step Functions executions, and resolve issues the workflow can't (it runs sequentially and fails on the first blocker).
 
-Nuke procedure (local, preferred):
+Nuke procedure (local, preferred). Order matters; do NOT skip step 1.
 
-1. List all stacks: `aws cloudformation list-stacks --stack-status-filter CREATE_COMPLETE UPDATE_COMPLETE UPDATE_ROLLBACK_COMPLETE ROLLBACK_COMPLETE DELETE_FAILED --profile devlocal --region eu-west-2 --query 'StackSummaries[?starts_with(StackName,\`pr-<stage>\`)].StackName'`
-2. Stop any Step Functions executions blocking deletes (list-executions, stop-execution in parallel with xargs -P)
-3. Empty S3 buckets in stacks that have them (`aws s3 rm s3://<bucket> --recursive`)
-4. Delete ROLLBACK_COMPLETE and DELETE_FAILED stacks first
-5. Delete remaining stacks (respect dependency order: child stacks before parents with cross-stack exports)
-6. For stacks in UPDATE_ROLLBACK_FAILED: `aws cloudformation continue-update-rollback --resources-to-skip <logical-ids>` (use full CDK logical IDs with hash suffixes)
-7. Verify zero stacks remain
-8. Push a commit with real file changes (not empty) to trigger a full deploy on the clean environment
+1. **Stop ALL Step Functions executions FIRST** (they block stack deletion indefinitely):
+   ```bash
+   # Find all state machines for the stage
+   for arn in $(aws stepfunctions list-state-machines --profile devlocal --region eu-west-2 \
+     --query 'stateMachines[?starts_with(name,`pr<stage>`)].stateMachineArn' --output text); do
+     aws stepfunctions list-executions --state-machine-arn "$arn" --status-filter RUNNING \
+       --profile devlocal --region eu-west-2 --query 'executions[].executionArn' --output text \
+       | tr '\t' '\n' | xargs -P 8 -I {} aws stepfunctions stop-execution --execution-arn {} \
+       --profile devlocal --region eu-west-2
+   done
+   ```
+   Also check state machines inside stacks (physical resource IDs) since they may not match the stage prefix.
+
+2. **Empty ALL S3 buckets** in parallel:
+   ```bash
+   aws s3api list-buckets --profile devlocal --region eu-west-2 \
+     --query 'Buckets[?starts_with(Name,`pr-<stage>`)].Name' --output text \
+     | tr '\t' '\n' | xargs -P 8 -I {} aws s3 rm s3://{} --recursive --profile devlocal --region eu-west-2
+   ```
+
+3. **Clear any stale OpenTofu state locks**:
+   ```bash
+   aws dynamodb scan --table-name plain-tofu-state-lock --profile devlocal --region eu-west-2 \
+     --filter-expression "contains(LockID, :s)" --expression-attribute-values '{":s":{"S":"pr-<stage>"}}'
+   # Delete any items found
+   ```
+
+4. **Delete stacks in waves** (P4 concurrency, P16 hits API throttling):
+   ```bash
+   aws cloudformation list-stacks --stack-status-filter CREATE_COMPLETE UPDATE_COMPLETE \
+     ROLLBACK_COMPLETE DELETE_FAILED UPDATE_ROLLBACK_FAILED --profile devlocal --region eu-west-2 \
+     --query 'StackSummaries[?starts_with(StackName,`pr-<stage>`)].StackName' --output text \
+     | tr '\t' '\n' | xargs -P 4 -I {} sh -c 'sleep $((RANDOM % 5)); aws cloudformation delete-stack \
+     --stack-name {} --profile devlocal --region eu-west-2 2>&1 || echo "FAILED: {}"'
+   ```
+
+5. **Wait for wave to drain, then repeat** until zero stacks remain. Cross-stack exports block deletion, so each wave unlocks the next. Resubmit healthy stacks after each drain; they become deletable once their importers are gone.
+
+6. **Verify zero stacks remain**, then push a rebase on main (not an empty commit) to trigger fresh deploy.
 
 Key gotchas:
-- Step Functions state machines with running executions block CloudFormation delete indefinitely
+- Step Functions with running executions block CloudFormation delete indefinitely; check BEFORE deleting stacks
 - S3 buckets must be emptied before stack delete
-- `continue-update-rollback --resources-to-skip` needs full CDK logical IDs (e.g. `MSTeamsWebhookHandlerMessageGrouper0867310A`), not bare names
-- Empty commits don't trigger deploy (evaluate step sees no file changes + existing GitHub deployment record and skips)
+- P16 xargs hits CloudFormation API throttling; use P4 with random sleep
+- `continue-update-rollback --resources-to-skip` needs full CDK logical IDs (e.g. `MSTeamsWebhookHandlerMessageGrouper0867310A`)
+- Empty commits don't trigger deploy (evaluate step skips)
 - After nuking, push a rebase on main or a real file change, not an empty commit
+- VPC Lambda ENI cleanup takes 5-20 min per Lambda; expect slow deletes on VPC stacks
 
 Fallback (if SSO token expires or local access is unavailable):
 

@@ -105,7 +105,7 @@ if [ -f package.json ]; then
   fi
 
   if [ -n "$PM" ]; then
-    for script in typecheck format:fix; do
+    for script in gen:monorepo typecheck lint format:fix; do
       if jq -e --arg s "$script" '.scripts[$s] // empty' package.json >/dev/null 2>&1; then
         echo "$PM run $script"
         "$PM" run "$script"

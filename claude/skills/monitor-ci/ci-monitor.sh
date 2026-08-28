@@ -165,7 +165,15 @@ while :; do
             fi
             if printf '%s' "$deploy_log" | grep -q "UPDATE_ROLLBACK_FAILED"; then
               echo "  → Stack stuck in UPDATE_ROLLBACK_FAILED"
-              echo "  → Fix: aws cloudformation continue-update-rollback --resources-to-skip <logical-ids> (use full CDK IDs with hash suffixes)"
+              echo "  → Fix: deploy-doctor.py rollback-fix -s <stage> --repair"
+            fi
+            if printf '%s' "$deploy_log" | grep -q "Error acquiring the state lock"; then
+              echo "  → Stale OpenTofu state lock in DynamoDB"
+              echo "  → Fix: scan plain-tofu-state-lock table for stage, delete stale lock, rerun"
+            fi
+            if printf '%s' "$deploy_log" | grep -qE "Validation failed with [0-9]+ error"; then
+              echo "  → Orphaned named resources blocking stack CREATE"
+              echo "  → Fix: deploy-doctor.py orphans -s <stage> --stack <StackName> --repair"
             fi
           fi
         fi
