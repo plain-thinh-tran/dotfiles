@@ -1,6 +1,5 @@
 {
   "model": "sonnet",
-  "outputStyle": "Concise",
   "hooks": {
     "SessionStart": [
       {
@@ -127,8 +126,10 @@
     "playwright@claude-plugins-official": false,
     "open-plan-annotator@open-plan-annotator": true,
     "caveman@caveman": true,
-    "html-explainers@plain-marketplace": true
+    "html-explainers@plain-marketplace": true,
+    "frontend-design@claude-plugins-official": true
   },
+  "outputStyle": "Concise",
   "skipDangerousModePermissionPrompt": true,
   "inputNeededNotifEnabled": true,
   "agentPushNotifEnabled": true,
