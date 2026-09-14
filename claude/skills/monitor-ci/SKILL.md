@@ -88,6 +88,8 @@ Then decide:
 | Deploy checks SKIPPED | Empty commit or ignored-files-only change; rebase on main and push |
 | All integration tests fail with same DB error | Environment database is corrupt; nuke and redeploy (see below) |
 | All integration tests fail with 404s | `Deploy plain services` likely failed; fix that first |
+| Deploy passed but env gutted (<10 stacks) | Close/reopen the PR. `gh run rerun` reuses cached job results and won't create missing stacks. Only `action: reopened` forces a full deploy. Verify stack count before/after with `aws cloudformation list-stacks` |
+| Email E2E fails with `FailedToStartTransactionError` | DB connections exhausted (often after heavy deploy churn). Reruns don't help. Wait 30 min for connections to drain, or rebase to get a different env |
 
 Known flaky: `Email E2E Test` (the script auto-reruns this one).
 
@@ -119,6 +121,8 @@ Cause: the queues were deleted outside CloudFormation. The state stacks holding 
 Check the whole stage, not just the queues named in the error log. Only the queues with a failing event source mapping show up there; others drift silently until something references them.
 
 After `drift --repair`, stacks that were in `ROLLBACK_COMPLETE` may have been deleted by `pre-deploy-cleanup`. SST then tries to UPDATE them but they no longer exist, failing with `Stack [name] does not exist`. A `--failed` rerun hits the same error. Use a full rerun (`gh run rerun <id>`, not `gh run rerun <id> --failed`) so SST issues a CREATE instead of an UPDATE.
+
+If the environment is gutted (most stacks gone), even a full `gh run rerun` can pass vacuously: it reuses cached successful job results, the deploy step sees nothing to update, and exits 0 with the env still empty. Close/reopen the PR instead. That triggers `action: reopened`, which forces a brand new workflow run. Note: close/reopen may reassign the PR to a different stage; check which stage was claimed in the deploy logs.
 
 ### Orphaned Named Resources (Validation Failed)
 

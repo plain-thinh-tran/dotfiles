@@ -127,17 +127,28 @@
     "open-plan-annotator@open-plan-annotator": true,
     "caveman@caveman": true,
     "html-explainers@plain-marketplace": true,
-    "frontend-design@claude-plugins-official": true
+    "frontend-design@claude-plugins-official": true,
+    "incident-blast-radius@plain-marketplace": true,
+    "codex@openai-codex": true
+  },
+  "extraKnownMarketplaces": {
+    "plain-marketplace": {
+      "source": {
+        "source": "git",
+        "url": "https://github.com/team-plain/plain-marketplace.git"
+      }
+    },
+    "openai-codex": {
+      "source": {
+        "source": "github",
+        "repo": "openai/codex-plugin-cc"
+      }
+    }
   },
   "outputStyle": "Concise",
   "skipDangerousModePermissionPrompt": true,
+  "theme": "dark-ansi",
   "inputNeededNotifEnabled": true,
-  "mcpServers": {
-    "lightpanda": {
-      "command": "lightpanda",
-      "args": ["mcp"]
-    }
-  },
   "agentPushNotifEnabled": true,
   "autoMode": {
     "environment": [
@@ -166,5 +177,13 @@
       "**Org-specific CLIs**: plain-internal, plain-internal-cli, pulumi, sw, k9s (observed frequently in shell history; scoped to this user's own usage, not corroborated as org policy)",
       "**Trusted repo routine-under qualifiers**: none — no remote or tracked content to scope a prefix to"
     ]
+  },
+  "mcpServers": {
+    "lightpanda": {
+      "command": "lightpanda",
+      "args": [
+        "mcp"
+      ]
+    }
   }
 }

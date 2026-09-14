@@ -50,8 +50,9 @@ allowing me to continue talking to you in the main chat, and to keep costs down.
 **ALWAYS run these commands before any `git push`:**
 1. `pnpm typecheck`
 2. `pnpm run format:fix`
+3. `pnpm run tofu:fmt`
 
-Do not push until both pass successfully.
+Do not push until all pass successfully.
 
 ## Github
 
