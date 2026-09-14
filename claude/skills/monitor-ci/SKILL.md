@@ -20,15 +20,54 @@ Defaults: PR from current branch, interval 300s, timeout 3600s. Exit codes: `0` 
 
 The script does not read review comments. Between polls, check for new PR review comments (skip bugbot) and surface them.
 
+## GitHub CLI Reference
+
+Only `gh`. Never the GitHub MCP server, always `unset GH_TOKEN` first. All commands verified against real `team-plain/services` PRs.
+
+### Checks (`gh pr checks`, [manual](https://cli.github.com/manual/gh_pr_checks))
+
+```bash
+gh pr checks <PR> --repo team-plain/services                                    # human table: name, bucket, elapsed, link
+gh pr checks <PR> --repo team-plain/services --json name,state,bucket,link      # machine readable
+gh pr checks <PR> --repo team-plain/services --required                        # required checks only
+gh pr checks <PR> --repo team-plain/services --watch --fail-fast                # blocks until done or first failure
+```
+
+- `--json` exposes `bucket` (`pass`/`fail`/`pending`/`skipping`/`cancel`), a normalized view of the many raw `state` values (`SUCCESS`, `FAILURE`, `IN_PROGRESS`, `QUEUED`, `SKIPPED`, ...). Prefer filtering on `bucket` over hardcoding a list of `state` strings.
+- Exit codes without `--json`: `0` all pass, `1` failure present, `8` still pending. `--repo` is required off a fork/other cwd; `gh` otherwise infers the repo from the current directory.
+- `link` for an Actions check is `https://github.com/<repo>/actions/runs/<RUN_ID>/job/<JOB_ID>`; non-Actions checks (Mergify, Greptile, Cursor Bugbot) link elsewhere and have no job id.
+
+### Job logs (`gh run view`)
+
+```bash
+gh run view --job <JOB_ID> --repo team-plain/services --log-failed   # only failed steps
+gh run view --job <JOB_ID> --repo team-plain/services --log          # full log
+gh run view <RUN_ID> --repo team-plain/services --json jobs          # list jobs in a run
+```
+
+`--repo` is mandatory unless cwd is inside that repo's checkout; a bare job id with the wrong cwd 404s instead of erroring clearly.
+
+### Reading PR content
+
+```bash
+gh pr view <PR> --repo team-plain/services --json title,body,author,state,statusCheckRollup   # description + rollup
+gh pr view <PR> --repo team-plain/services --json reviews --jq '.reviews[] | {author: .author.login, state, body}'   # top-level review verdicts
+gh api repos/team-plain/services/pulls/<PR>/comments --jq '.[] | select(.user.login != "greptile-apps[bot]" and .user.login != "cursor[bot]") | {user: .user.login, path, line, body}'   # inline review comments, bots filtered
+gh pr diff <PR> --repo team-plain/services   # full unified diff
+```
+
+Inline review comments (line-anchored) only come from `gh api .../pulls/<PR>/comments`, not `gh pr view --json reviews` (that's just the top-level review verdict/body per reviewer).
+
 ## When the script stops on a real failure
 
 Never blindly retrigger. Analyse first:
 
 1. Fetch the failing job's logs (run/job id from the check link URL `.../actions/runs/<RUN_ID>/job/<JOB_ID>`):
    ```bash
-   unset GH_TOKEN && gh pr checks <PR> --json name,state,link
-   unset GH_TOKEN && gh run view --job <JOB_ID> --log-failed
+   unset GH_TOKEN && gh pr checks <PR> --repo team-plain/services --json name,state,bucket,link
+   unset GH_TOKEN && gh run view --job <JOB_ID> --repo team-plain/services --log-failed
    ```
+   `-R/--repo` is required whenever cwd isn't a checkout of `team-plain/services` (job/run ids are not repo-scoped by themselves; `gh` infers the repo from cwd and silently 404s against the wrong one otherwise).
 2. Review our diff: `git diff origin/main..HEAD --stat`
 3. Check if main already has a fix: `git fetch origin main && git diff origin/main -- <failing-file>`
 

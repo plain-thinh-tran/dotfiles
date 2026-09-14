@@ -53,7 +53,7 @@ pr_head_sha() {
 }
 
 checks_json() {
-  gh pr checks "$PR" --json name,state,link 2>/dev/null \
+  gh pr checks "$PR" --json name,state,bucket,link 2>/dev/null \
     | jq '[.[] | select(.name != "Mergify Merge Protections")]'
 }
 
@@ -78,9 +78,9 @@ while :; do
   now="$(date +%s)"
   json="$(checks_json)"
   total="$(printf '%s' "$json" | jq 'length')"
-  passed="$(printf '%s' "$json" | jq '[.[] | select(.state=="SUCCESS")] | length')"
-  pending="$(printf '%s' "$json" | jq '[.[] | select(.state=="PENDING" or .state=="QUEUED" or .state=="IN_PROGRESS")] | length')"
-  failed_json="$(printf '%s' "$json" | jq '[.[] | select(.state=="FAILURE" or .state=="ERROR" or .state=="CANCELLED" or .state=="TIMED_OUT")]')"
+  passed="$(printf '%s' "$json" | jq '[.[] | select(.bucket=="pass")] | length')"
+  pending="$(printf '%s' "$json" | jq '[.[] | select(.bucket=="pending")] | length')"
+  failed_json="$(printf '%s' "$json" | jq '[.[] | select(.bucket=="fail" or .bucket=="cancel")]')"
   failed="$(printf '%s' "$failed_json" | jq 'length')"
 
   # fixed layout, printed every poll
@@ -143,7 +143,7 @@ while :; do
       if [ -n "$deploy_link" ]; then
         deploy_job_id="$(printf '%s' "$deploy_link" | sed -nE 's#.*/job/([0-9]+).*#\1#p')"
         if [ -n "$deploy_job_id" ]; then
-          deploy_log="$(gh run view --job "$deploy_job_id" --log-failed 2>/dev/null || true)"
+          deploy_log="$(gh run view --job "$deploy_job_id" -R "$REPO" --log-failed 2>/dev/null || true)"
           if [ -n "$deploy_log" ]; then
             echo ""
             echo "🔍 Deploy failure diagnosis:"
