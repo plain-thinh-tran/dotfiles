@@ -136,6 +136,19 @@ link "$DOTFILES_DIR/claude/CLAUDE.md" "$HOME/.claude/CLAUDE.md"
 link "$DOTFILES_DIR/claude/settings.json" "$HOME/.claude/settings.json"
 link "$DOTFILES_DIR/claude/statusline-command.sh" "$HOME/.claude/statusline-command.sh"
 
+if command -v rtk &>/dev/null; then
+  if grep -q '"rtk hook claude"' "$DOTFILES_DIR/claude/settings.json" 2>/dev/null; then
+    info "rtk hook already configured, skipping"
+  else
+    if $DRY_RUN; then
+      dry "run 'rtk init -g' to install rtk's Claude Code hook"
+    else
+      info "Configuring rtk hook..."
+      rtk init -g
+    fi
+  fi
+fi
+
 for cmd in "$DOTFILES_DIR/claude/commands/"*; do
   link "$cmd" "$HOME/.claude/commands/$(basename "$cmd")"
 done
@@ -230,6 +243,12 @@ if command -v op &>/dev/null && op account list &>/dev/null 2>&1; then
   ok   "1Password CLI"
 else
   todo "1Password CLI — run 'op signin' to connect your vault"
+fi
+
+if grep -q '"rtk hook claude"' "$HOME/.claude/settings.json" 2>/dev/null; then
+  ok   "rtk hook"
+else
+  todo "rtk hook — run 'rtk init -g' and restart Claude Code"
 fi
 
 echo ""
