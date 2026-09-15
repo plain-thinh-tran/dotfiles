@@ -25,5 +25,6 @@ brew "zoxide"
 
 cask "flameshot"
 cask "session-manager-plugin"
+cask "thaw"
 
 mas "Amphetamine", id: 937984704
