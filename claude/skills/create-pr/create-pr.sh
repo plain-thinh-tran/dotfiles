@@ -126,7 +126,31 @@ git push -u --force-with-lease origin "$BRANCH"
 
 # 6. create the PR; body is ONLY the Linear link
 LINEAR_URL="https://linear.app/plain/issue/${LINEAR_ID}"
-BODY="[${LINEAR_ID}](${LINEAR_URL})"
+BODY=$(cat <<'BODYEOF'
+> Fixes [__LINEAR_ID__](__LINEAR_URL__)
+
+<!--
+
+> [!NOTE]
+> Useful information that users should know, even when skimming content.
+
+> [!TIP]
+> Helpful advice for doing things better or more easily.
+
+> [!IMPORTANT]
+> Key information users need to know to achieve their goal.
+
+> [!WARNING]
+> Urgent info that needs immediate user attention to avoid problems.
+
+> [!CAUTION]
+> Advises about risks or negative outcomes of certain actions.
+
+-->
+BODYEOF
+)
+BODY="${BODY//__LINEAR_ID__/$LINEAR_ID}"
+BODY="${BODY//__LINEAR_URL__/$LINEAR_URL}"
 
 gh pr create --draft --base "$BASE" --head "$BRANCH" --title "$TITLE" --body "$BODY"
 gh pr view "$BRANCH" --json url --jq '.url'
