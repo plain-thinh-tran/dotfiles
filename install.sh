@@ -32,6 +32,14 @@ if $DRY_RUN; then
   echo ""
 fi
 
+if [ "$(git -C "$DOTFILES_DIR" branch --show-current)" = "main" ]; then
+  info "Pulling latest main..."
+  run git -C "$DOTFILES_DIR" fetch origin main
+  run git -C "$DOTFILES_DIR" merge --ff-only origin/main
+else
+  warn "$DOTFILES_DIR is not on main, skipping pull"
+fi
+
 info "Initializing submodules..."
 run git -C "$DOTFILES_DIR" submodule update --init --recursive
 
