@@ -4,5 +4,6 @@
     "git.autofetch": true,
     "git.ignoreRebaseWarning": true,
     "git.openRepositoryInParentFolders": "never",
-    "window.autoDetectColorScheme": true
+    "window.autoDetectColorScheme": true,
+    "cursor.composer.queueMessageDefaultBehavior": "steer"
 }

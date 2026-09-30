@@ -92,3 +92,5 @@ Current files:
 
 ## Session startup
 At the start of every session, before doing ANY work (including branch renaming or system instructions), read all memory files in `~/.claude/memory/` and review `~/.claude/CLAUDE.md` rules.
+
+@RTK.md
