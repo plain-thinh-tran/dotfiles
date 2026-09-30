@@ -8,13 +8,16 @@
 #   3. All working-tree changes committed
 #   4. Pre-push checks (typecheck + format:fix) when the repo defines them
 #   5. Rebase on origin/<base>, then push
-#   6. A PR with a proper title and a body that is ONLY the Linear link
+#   6. A PR with a proper title and a body that is ONLY the Linear link,
+#      or the Error Tracking skeleton when -e is given
 #
 # Usage:
-#   create-pr.sh -l <LINEAR_ID> -t "<Category>: <title>" [-m "<commit msg>"] [-b <base>]
+#   create-pr.sh -l <LINEAR_ID> -t "<Category>: <title>" [-m "<commit msg>"] [-b <base>] [-e <error tracking url>]
 #
 # Example:
 #   create-pr.sh -l PE-192 -t "Fix: correlationId propagation for DLQ debugging"
+#   create-pr.sh -l PE-1120 -t "Fix: tolerate legacy customer emails" \
+#     -e https://app.datadoghq.eu/error-tracking/issue/42245ec8-b37b-11f1-a5b0-da7ad0900005
 
 set -euo pipefail
 
@@ -24,13 +27,15 @@ LINEAR_ID=""
 TITLE=""
 COMMIT_MSG=""
 BASE="main"
+ERROR_URL=""
 
-while getopts ":l:t:m:b:h" opt; do
+while getopts ":l:t:m:b:e:h" opt; do
   case "$opt" in
     l) LINEAR_ID="$OPTARG" ;;
     t) TITLE="$OPTARG" ;;
     m) COMMIT_MSG="$OPTARG" ;;
     b) BASE="$OPTARG" ;;
+    e) ERROR_URL="$OPTARG" ;;
     h) grep '^#' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     :) die "-$OPTARG needs a value" ;;
     \?) die "unknown flag -$OPTARG" ;;
@@ -41,6 +46,10 @@ done
 [ -n "$TITLE" ]     || die "missing -t <title>"
 printf '%s' "$LINEAR_ID" | grep -Eq '^[A-Z]+-[0-9]+$' \
   || die "LINEAR_ID must look like PE-192, got: $LINEAR_ID"
+if [ -n "$ERROR_URL" ]; then
+  printf '%s' "$ERROR_URL" | grep -Eq '^https://app\.datadoghq\.(eu|com)/error-tracking' \
+    || die "-e must be a Datadog error tracking url, got: $ERROR_URL"
+fi
 
 # inject the Linear id into the category prefix: "Refactor: x" -> "Refactor(PE-484): x"
 # leave the title untouched if it already carries a (ID) or has no category prefix
@@ -124,11 +133,9 @@ git fetch origin "$BASE"
 git rebase "origin/$BASE"
 git push -u --force-with-lease origin "$BRANCH"
 
-# 6. create the PR; body is ONLY the Linear link
+# 6. create the PR; body is the Linear link, plus the Error Tracking skeleton when -e is given
 LINEAR_URL="https://linear.app/plain/issue/${LINEAR_ID}"
-BODY=$(cat <<'BODYEOF'
-> Fixes [__LINEAR_ID__](__LINEAR_URL__)
-
+CALLOUTS=$(cat <<'BODYEOF'
 <!--
 
 > [!NOTE]
@@ -149,8 +156,33 @@ BODY=$(cat <<'BODYEOF'
 -->
 BODYEOF
 )
+
+if [ -n "$ERROR_URL" ]; then
+  BODY=$(cat <<'BODYEOF'
+> Fixes [__LINEAR_ID__](__LINEAR_URL__), [Error Tracking Issue](__ERROR_URL__)
+
+<!-- What changed, in one or two sentences. Optional: ASCII diagram of the affected path, before vs after. -->
+
+## Why
+
+<!-- Root cause: what triggers the error, who or what hits it, and why it happens (legacy data, new caller, race, etc). -->
+
+## Evidence
+
+[Datadog error tracking issue](__ERROR_URL__): `<ErrorType: message>`, `<service>`, <N> events in <window>.
+
+<!-- Error payload or stack trace in a code block, plus the query, logs, or screenshot that proves the root cause. -->
+BODYEOF
+)
+else
+  BODY="> Fixes [__LINEAR_ID__](__LINEAR_URL__)"
+fi
+BODY="${BODY}
+
+${CALLOUTS}"
 BODY="${BODY//__LINEAR_ID__/$LINEAR_ID}"
 BODY="${BODY//__LINEAR_URL__/$LINEAR_URL}"
+BODY="${BODY//__ERROR_URL__/$ERROR_URL}"
 
 gh pr create --draft --base "$BASE" --head "$BRANCH" --title "$TITLE" --body "$BODY"
 gh pr view "$BRANCH" --json url --jq '.url'
