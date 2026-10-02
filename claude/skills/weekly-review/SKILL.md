@@ -20,16 +20,16 @@ REPO=/Users/thinhtran/workspace/self-learning
 
 ## Steps
 
-1. **Sync.** `git -C "$REPO" checkout main && git -C "$REPO" pull --ff-only`. Stop and report if the tree is dirty or the pull fails
+1. **Sync.** `git -C "$REPO" checkout main`. If the only change in the tree is `weekly-reviews/guidelines/decisions.json` (his Agree and Ignore clicks), commit it as `Record review decisions` first. Then `git -C "$REPO" pull --rebase`. Stop and report if anything else is dirty or the pull fails
 2. **Check for an existing issue.** If `$REPO/weekly-reviews/json/<end>.json` exists and `redo` was not given, tell Thinh it exists, run `$REPO/weekly-reviews/review.sh <end>` to open it, and stop. With `redo`, delete that JSON and pass `--refresh` in step 3
 3. **Collect.** `$REPO/weekly-reviews/review.sh <end> [--refresh]`. It collects `data/<end>.json` (a few minutes) and exits 2 because the review does not exist yet. Any other failure: stop and report the output
-4. **Write the review.** Read and obey `$REPO/weekly-reviews/PROMPT.md` in full, then `$REPO/weekly-reviews/guidelines/README.md`, then the guideline file for each section right before you write it, ticking its checklist. Read the previous issue in `json/` and grade its actions. Write only `$REPO/weekly-reviews/json/<end>.json`
-5. **Build and open.** `$REPO/weekly-reviews/review.sh <end>`. Fix the JSON and rerun until it prints `✓ generated`. It opens `site/<end>.html` in the browser
+4. **Write the review.** Read and obey `$REPO/weekly-reviews/PROMPT.md` in full, then `$REPO/weekly-reviews/guidelines/README.md`, then the guideline file for each section right before you write it, ticking its checklist. Read the previous issue in `json/` and grade its actions, applying his decisions from `guidelines/decisions.json` as `guidelines/decisions.md` says. Write only `$REPO/weekly-reviews/json/<end>.json`
+5. **Build and open.** `$REPO/weekly-reviews/review.sh <end>`. Fix the JSON and rerun until it prints `✓ generated`. It starts the local server if needed and opens `http://localhost:4173/<end>.html`, where the Agree and Ignore buttons work
 6. **Push.** Commit only the two files for this week and push to main:
 
    ```bash
    cd "$REPO"
-   git add weekly-reviews/data/<end>.json weekly-reviews/json/<end>.json
+   git add weekly-reviews/data/<end>.json weekly-reviews/json/<end>.json weekly-reviews/guidelines/decisions.json
    git commit -m "Weekly review: issue <n> (<start> to <end>)"
    git push origin main
    ```
@@ -38,7 +38,7 @@ REPO=/Users/thinhtran/workspace/self-learning
 
 ## Rules
 
-- Never edit `codegen/`, `collect/`, `guidelines/`, `PROMPT.md` or a previous week's JSON. Wrong claims from last week go in `corrections`
+- Never edit `codegen/`, `collect/`, `guidelines/` (including `decisions.json`, which only his clicks write), `PROMPT.md` or a previous week's JSON. Wrong claims from last week go in `corrections`
 - The repo is private and holds internal Plain data. Never publish `site/` anywhere (no GitHub Pages, no gists, no uploads)
 
 ## Report
