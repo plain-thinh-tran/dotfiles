@@ -1,0 +1,111 @@
+#!/usr/bin/env python3
+import json
+import os
+import signal
+import subprocess
+import sys
+import threading
+import time
+
+REAL = os.environ.get("CLAUDE_RC_REAL", os.path.expanduser("~/.local/bin/claude"))
+CHANNEL = f"/tmp/claude-rc/{os.getpid()}"
+REQUEST = os.path.join(CHANNEL, "request")
+URL = os.path.join(CHANNEL, "url")
+PREFIX = "claude-rc-"
+
+os.makedirs(CHANNEL, exist_ok=True)
+env = dict(os.environ, CLAUDE_RC_CHANNEL=CHANNEL)
+child = subprocess.Popen([REAL, *sys.argv[1:]], stdin=subprocess.PIPE, stdout=subprocess.PIPE, env=env)
+lock = threading.Lock()
+
+
+def write_child(line):
+    with lock:
+        child.stdin.write(line)
+        child.stdin.flush()
+
+
+def pump_stdin():
+    try:
+        for line in sys.stdin.buffer:
+            write_child(line)
+    except (BrokenPipeError, ValueError):
+        pass
+    finally:
+        try:
+            child.stdin.close()
+        except Exception:
+            pass
+
+
+def swallow(line):
+    if b"bridge_state" not in line and PREFIX.encode() not in line:
+        return False
+    try:
+        msg = json.loads(line)
+    except ValueError:
+        return False
+    if msg.get("type") == "system" and msg.get("subtype") == "bridge_state":
+        return True
+    resp = msg.get("response") or {}
+    if msg.get("type") == "control_response" and str(resp.get("request_id", "")).startswith(PREFIX):
+        body = resp.get("response") or {}
+        out = body.get("session_url") or resp.get("error") or "disabled"
+        tmp = URL + ".tmp"
+        with open(tmp, "w") as f:
+            f.write(out + "\n")
+        os.replace(tmp, URL)
+        return True
+    return False
+
+
+def pump_stdout():
+    for line in child.stdout:
+        if swallow(line):
+            continue
+        sys.stdout.buffer.write(line)
+        sys.stdout.buffer.flush()
+
+
+def watch_requests():
+    n = 0
+    while child.poll() is None:
+        if os.path.exists(REQUEST):
+            with open(REQUEST) as f:
+                arg = f.read().strip()
+            os.remove(REQUEST)
+            n += 1
+            request = {"subtype": "remote_control", "enabled": arg != "off"}
+            if arg and arg != "off":
+                request["name"] = arg
+            msg = {"type": "control_request", "request_id": f"{PREFIX}{n}", "request": request}
+            try:
+                write_child((json.dumps(msg) + "\n").encode())
+            except (BrokenPipeError, ValueError):
+                return
+        time.sleep(0.5)
+
+
+def forward(sig, _):
+    if child.poll() is None:
+        child.send_signal(sig)
+
+
+for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+    signal.signal(sig, forward)
+
+threading.Thread(target=pump_stdin, daemon=True).start()
+threading.Thread(target=watch_requests, daemon=True).start()
+pump_stdout()
+code = child.wait()
+for path in (REQUEST, URL):
+    try:
+        os.remove(path)
+    except FileNotFoundError:
+        pass
+try:
+    os.rmdir(CHANNEL)
+except OSError:
+    pass
+sys.stdout.flush()
+os._exit(code if code >= 0 else 128 - code)
