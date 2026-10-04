@@ -17,6 +17,18 @@ for i in $(seq 1 30); do [ -f "$CLAUDE_RC_CHANNEL/url" ] && break; sleep 1; done
 cat "$CLAUDE_RC_CHANNEL/url" 2>/dev/null || echo "TIMEOUT"
 ```
 
+## Keepalive
+
+Conductor kills a session's Claude process after 30 minutes without a Conductor message, and messages sent from the phone do not count. A running background task blocks that sweep. When the output is a URL and no keepalive task is already running in this session, start one with the Bash tool, `run_in_background: true` and `timeout: 7200000`:
+
+```bash
+while grep -q '^https' "$CLAUDE_RC_CHANNEL/url" 2>/dev/null; do sleep 30; done
+```
+
+It exits on its own after `off`, since the wrapper then writes `disabled` to the url file. When it is stopped at the 2 hour limit while the url file still holds a URL, start it again, even if the notice says not to restart a task that hit the longest timeout; Thinh wants this. Stop restarting once Remote Control has been on for 8 hours.
+
+## Reply
+
 Reply with one line based on the output:
 
 - A `https://claude.ai/code/session_...` URL: "Remote Control on: <url>"
