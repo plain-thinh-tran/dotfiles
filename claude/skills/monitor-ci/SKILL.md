@@ -20,6 +20,14 @@ Defaults: PR from current branch, interval 300s, timeout 3600s. Exit codes: `0` 
 
 The script does not read review comments. Between polls, check for new PR review comments (skip bugbot) and surface them.
 
+## Mergify Merge Protections
+
+Always ignore the `Mergify Merge Protections` check. It is a merge gate (draft, approvals, queue rules), not CI, and it stays red until the PR is mergeable. Never list it as a failure, never investigate or rerun it, and leave it out of status reports. When querying checks by hand, filter it out:
+
+```bash
+gh pr checks <PR> --repo team-plain/services --json name,bucket,link --jq '[.[] | select(.name != "Mergify Merge Protections")]'
+```
+
 ## GitHub CLI Reference
 
 Only `gh`. Never the GitHub MCP server, always `unset GH_TOKEN` first. All commands verified against real `team-plain/services` PRs.
@@ -32,6 +40,8 @@ gh pr checks <PR> --repo team-plain/services --json name,state,bucket,link      
 gh pr checks <PR> --repo team-plain/services --required                        # required checks only
 gh pr checks <PR> --repo team-plain/services --watch --fail-fast                # blocks until done or first failure
 ```
+
+The table output, exit codes and `--watch --fail-fast` all count the Mergify gate as a failure. Use the filtered `--json` query above to judge pass/fail.
 
 - `--json` exposes `bucket` (`pass`/`fail`/`pending`/`skipping`/`cancel`), a normalized view of the many raw `state` values (`SUCCESS`, `FAILURE`, `IN_PROGRESS`, `QUEUED`, `SKIPPED`, ...). Prefer filtering on `bucket` over hardcoding a list of `state` strings.
 - Exit codes without `--json`: `0` all pass, `1` failure present, `8` still pending. `--repo` is required off a fork/other cwd; `gh` otherwise infers the repo from the current directory.

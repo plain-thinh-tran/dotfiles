@@ -93,7 +93,7 @@ while :; do
 
   # all green
   if [ "$total" -gt 0 ] && [ "$failed" -eq 0 ] && [ "$pending" -eq 0 ]; then
-    deploy_skipped="$(printf '%s' "$json" | jq '[.[] | select((.name | test("Deploy.*SST|Deploy plain")) and .state=="SKIPPED")] | length')"
+    deploy_skipped="$(printf '%s' "$json" | jq '[.[] | select(.name == "Deploy / Deploy SST Stage" and .state=="SKIPPED")] | length')"
     if [ "$deploy_skipped" -gt 0 ]; then
       echo "⚠️  deploy checks were SKIPPED (not run). Integration tests ran against a non-existent or stale environment."
       echo ""
