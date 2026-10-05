@@ -49,7 +49,7 @@ Shipped/canceled items are hidden from the **right** column of whichever file th
 
 6. Screenshot the board with the chrome-devtools MCP: `new_page` → `navigate_page` to `http://localhost:5173/` → select the affected team and week → `take_screenshot` saved to `/tmp/priorities.png`. If the tool returns base64 instead of writing a file, decode it to that path.
 7. Stop the preview: `~/.claude/skills/update-product-priorities/scripts/preview.sh stop`.
-8. Create the Linear ticket (team Platform, assigned to me) if one doesn't exist yet, then ship:
+8. Create the Linear ticket with the `create-linear-issue` skill if one doesn't exist yet, then ship:
 
    ```bash
    ~/.claude/skills/update-product-priorities/scripts/ship-pr.sh \

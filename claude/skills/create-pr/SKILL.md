@@ -16,7 +16,7 @@ allowed-tools: Bash, Read, Grep, Glob
 ./create-pr.sh -l PE-192 -t "<Category>: <title>" [-m "<commit msg>"] [-b <base>] [-e <error tracking url>]
 ```
 
-Prerequisite: create the Linear ticket first (team Platform, assigned to me) — the script will not run without a valid id.
+Prerequisite: a Linear id. If none exists, create it with the `create-linear-issue` skill; the script will not run without a valid id.
 
 ## Error Tracking Issues
 

@@ -54,6 +54,10 @@ allowing me to continue talking to you in the main chat, and to keep costs down.
 
 Do not push until all pass successfully.
 
+## Linear
+
+Create Linear issues with the Linear MCP following the `create-linear-issue` skill; a PreToolUse hook on `save_issue` denies anything that breaks these rules. Every issue goes in team Platform, in a project (this week's Reactive Work project when nothing fits better), with a priority and at least one label.
+
 ## Github
 
 If github connection doesnt work, try unsetting the GH_TOKEN variable.
