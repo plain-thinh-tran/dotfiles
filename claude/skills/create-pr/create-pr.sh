@@ -6,7 +6,8 @@
 #   1. A Linear issue id (you must have created the ticket first)
 #   2. Branch renamed to <LINEAR_ID>/<slug> (no plain-thinh-tran/ prefix)
 #   3. All working-tree changes committed
-#   4. Pre-push checks (typecheck + format:fix) when the repo defines them
+#   4. Pre-push checks (typecheck + format:fix) when the repo defines them;
+#      typecheck goes through ~/.claude/bin/typecheck-changed
 #   5. Rebase on origin/<base>, then push
 #   6. A PR with a proper title and a body that is ONLY the Linear link,
 #      or the Error Tracking skeleton when -e is given
@@ -116,8 +117,12 @@ if [ -f package.json ]; then
   if [ -n "$PM" ]; then
     for script in gen:monorepo typecheck lint format:fix; do
       if jq -e --arg s "$script" '.scripts[$s] // empty' package.json >/dev/null 2>&1; then
-        echo "$PM run $script"
-        "$PM" run "$script"
+        if [ "$script" = typecheck ]; then
+          "$HOME/.claude/bin/typecheck-changed" -b "$BASE"
+        else
+          echo "$PM run $script"
+          "$PM" run "$script"
+        fi
       else
         echo "skipping $script (not defined in package.json)"
       fi

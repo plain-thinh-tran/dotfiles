@@ -48,7 +48,7 @@ allowing me to continue talking to you in the main chat, and to keep costs down.
 ## Pre-push checklist
 
 **ALWAYS run these commands before any `git push`:**
-1. `pnpm typecheck`
+1. `~/.claude/bin/typecheck-changed` (add `-b <base>` for stacked PRs). It skips when no TypeScript changed since the last push and otherwise builds only the touched projects, throttled. Never run the full `pnpm typecheck` yourself; it melts the laptop and CI runs it anyway.
 2. `pnpm run format:fix`
 3. `pnpm run tofu:fmt`
 

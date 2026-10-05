@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+# typecheck-changed — typecheck only when needed, and only what changed.
+#
+# Runs when this branch's TypeScript files changed since the last push (or ever,
+# if the branch was never pushed). Skips docs, tofu, yaml, sql and config only pushes.
+# In project reference monorepos (root tsconfig.json has "references") it builds only
+# the projects owning those files, throttled on TS 7+. Elsewhere it runs the repo's
+# own typecheck script. Run from the repo root.
+#
+# Usage:
+#   typecheck-changed [-b <base>]   (base defaults to main)
+
+set -euo pipefail
+
+BASE="main"
+while getopts ":b:h" opt; do
+  case "$opt" in
+    b) BASE="$OPTARG" ;;
+    h) grep '^#' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) echo "usage: typecheck-changed [-b <base>]" >&2; exit 1 ;;
+  esac
+done
+
+if ! jq -e '.scripts.typecheck // empty' package.json >/dev/null 2>&1; then
+  echo "skipping typecheck (no typecheck script)"
+  exit 0
+fi
+
+if   [ -f pnpm-lock.yaml ];    then PM="pnpm"
+elif [ -f package-lock.json ]; then PM="npm"
+elif [ -f yarn.lock ];         then PM="yarn"
+else echo "skipping typecheck (no lockfile)"; exit 0
+fi
+
+ts_files() { git diff --name-only "$@" | grep -E '\.(ts|tsx|mts|cts)$' | sort -u || true; }
+
+git rev-parse -q --verify "origin/$BASE" >/dev/null || git fetch -q origin "$BASE"
+files=$(ts_files "origin/$BASE...HEAD")
+
+pushed=$(git rev-parse -q --verify '@{push}' 2>/dev/null \
+  || git rev-parse -q --verify "origin/$(git branch --show-current)" || true)
+if [ -n "$pushed" ]; then
+  files=$(comm -12 <(printf '%s\n' "$files") <(ts_files "$pushed" HEAD))
+fi
+
+if [ -z "$files" ]; then
+  echo "skipping typecheck (no TypeScript changes since last push)"
+  exit 0
+fi
+
+if ! grep -q '"references"' tsconfig.json 2>/dev/null; then
+  echo "$PM run typecheck"
+  exec "$PM" run typecheck
+fi
+
+dirs=$(printf '%s\n' "$files" | while read -r f; do
+  d=$(dirname "$f")
+  while [ "$d" != "." ]; do
+    if [ -f "$d/tsconfig.json" ]; then echo "$d"; break; fi
+    d=$(dirname "$d")
+  done
+done | sort -u)
+
+if [ -z "$dirs" ]; then
+  echo "skipping typecheck (changed files belong to no TS project)"
+  exit 0
+fi
+
+flags=""
+case "$("$PM" exec tsc --version)" in
+  *"Version "[7-9]*) flags="--builders 2 --checkers 2" ;;
+esac
+echo "$PM exec tsc --build $flags" $dirs
+exec "$PM" exec tsc --build $flags $dirs
