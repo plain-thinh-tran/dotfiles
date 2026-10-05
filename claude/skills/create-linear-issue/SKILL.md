@@ -1,12 +1,12 @@
 ---
 name: create-linear-issue
-description: Create a Linear issue through the Linear MCP in team Platform with a project, priority, and labels. Use whenever an issue must be created, including when create-pr or another skill needs a Linear id.
+description: Create a Linear issue through the Linear MCP in team Platform with a project, priority, and labels. Use whenever an issue must be created in a team-plain repo, including when create-pr or another skill needs a Linear id. Never for repos outside team-plain.
 allowed-tools: mcp__claude_ai_Linear__list_projects, mcp__claude_ai_Linear__list_milestones, mcp__claude_ai_Linear__list_issue_labels, mcp__claude_ai_Linear__save_issue
 ---
 
 # Create Linear Issue
 
-Every issue goes in team Platform, in a project, with a priority and at least one label, assigned to me. `linear-issue-guard.py` runs as a PreToolUse hook on `save_issue` and denies any create that misses one of these. If it denies, fix the arguments it names and retry.
+Only create issues for work in team-plain repos (origin under `team-plain/`); never for other repos such as PewhProgrammer ones. Every issue goes in team Platform, in a project, with a priority and at least one label, assigned to me. `linear-issue-guard.py` runs as a PreToolUse hook on `save_issue` and denies any create that misses one of these, or that runs from a git repo outside team-plain. If it denies, fix the arguments it names and retry.
 
 ## Steps
 

@@ -3,8 +3,9 @@
 # Companion to the create-pr skill (see SKILL.md).
 #
 # Forces, in order:
-#   1. A Linear issue id (you must have created the ticket first)
-#   2. Branch renamed to <LINEAR_ID>/<slug> (no plain-thinh-tran/ prefix)
+#   1. A Linear issue id in team-plain repos (you must have created the ticket first);
+#      no Linear id anywhere else
+#   2. Branch renamed to <LINEAR_ID>/<slug>, or <slug> outside team-plain (no plain-thinh-tran/ prefix)
 #   3. All working-tree changes committed
 #   4. Pre-push checks (typecheck + format:fix) when the repo defines them;
 #      typecheck goes through ~/.claude/bin/typecheck-changed
@@ -13,7 +14,7 @@
 #      or the Error Tracking skeleton when -e is given
 #
 # Usage:
-#   create-pr.sh -l <LINEAR_ID> -t "<Category>: <title>" [-m "<commit msg>"] [-b <base>] [-e <error tracking url>]
+#   create-pr.sh [-l <LINEAR_ID>] -t "<Category>: <title>" [-m "<commit msg>"] [-b <base>] [-e <error tracking url>]
 #
 # Example:
 #   create-pr.sh -l PE-192 -t "Fix: correlationId propagation for DLQ debugging"
@@ -43,10 +44,18 @@ while getopts ":l:t:m:b:e:h" opt; do
   esac
 done
 
-[ -n "$LINEAR_ID" ] || die "missing -l <LINEAR_ID> (create the Linear ticket first)"
-[ -n "$TITLE" ]     || die "missing -t <title>"
-printf '%s' "$LINEAR_ID" | grep -Eq '^[A-Z]+-[0-9]+$' \
-  || die "LINEAR_ID must look like PE-192, got: $LINEAR_ID"
+[ -n "$TITLE" ] || die "missing -t <title>"
+git rev-parse --is-inside-work-tree >/dev/null 2>&1 || die "not a git repo"
+
+ORIGIN_URL="$(git remote get-url origin 2>/dev/null || true)"
+if printf '%s' "$ORIGIN_URL" | grep -Eq '[:/]team-plain/'; then
+  [ -n "$LINEAR_ID" ] || die "missing -l <LINEAR_ID> (create the Linear ticket first with the create-linear-issue skill)"
+  printf '%s' "$LINEAR_ID" | grep -Eq '^[A-Z]+-[0-9]+$' \
+    || die "LINEAR_ID must look like PE-192, got: $LINEAR_ID"
+else
+  [ -z "$LINEAR_ID" ] || die "no Linear issues outside team-plain repos (origin: ${ORIGIN_URL:-none}); drop -l"
+  [ -z "$ERROR_URL" ] || die "-e needs a Linear issue, which only team-plain repos use"
+fi
 if [ -n "$ERROR_URL" ]; then
   printf '%s' "$ERROR_URL" | grep -Eq '^https://app\.datadoghq\.(eu|com)/error-tracking' \
     || die "-e must be a Datadog error tracking url, got: $ERROR_URL"
@@ -57,13 +66,12 @@ fi
 DESCRIPTION="$TITLE"
 if [[ "$TITLE" =~ ^([A-Za-z]+):[[:space:]]*(.*)$ ]]; then
   DESCRIPTION="${BASH_REMATCH[2]}"
-  TITLE="${BASH_REMATCH[1]}(${LINEAR_ID}): ${DESCRIPTION}"
+  [ -z "$LINEAR_ID" ] || TITLE="${BASH_REMATCH[1]}(${LINEAR_ID}): ${DESCRIPTION}"
 fi
 
 # gh auth in this repo can choke on a stale GH_TOKEN
 unset GH_TOKEN || true
 
-git rev-parse --is-inside-work-tree >/dev/null 2>&1 || die "not a git repo"
 BRANCH="$(git branch --show-current)"
 [ -n "$BRANCH" ] || die "detached HEAD; checkout a branch"
 [ "$BRANCH" != "$BASE" ] || die "refusing to open a PR from $BASE; make a feature branch"
@@ -74,7 +82,7 @@ if EXISTING_URL="$(gh pr view "$BRANCH" --json url --jq '.url' 2>/dev/null)" && 
   exit 0
 fi
 
-# 2. rename branch to <LINEAR_ID>-<slug> unless it already carries the id
+# 2. rename branch to <LINEAR_ID>/<slug> unless it already carries the id; <slug> without a Linear id
 slug() {
   local s
   s="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' \
@@ -85,8 +93,13 @@ slug() {
     printf '%s' "${s:0:48}" | sed -E 's/-[^-]*$//'
   fi
 }
-if ! printf '%s' "$BRANCH" | grep -Eq "^${LINEAR_ID}/"; then
+if [ -n "$LINEAR_ID" ]; then
   NEW_BRANCH="${LINEAR_ID}/$(slug "$DESCRIPTION")"
+  printf '%s' "$BRANCH" | grep -Eq "^${LINEAR_ID}/" && NEW_BRANCH="$BRANCH"
+else
+  NEW_BRANCH="$(slug "$DESCRIPTION")"
+fi
+if [ "$NEW_BRANCH" != "$BRANCH" ]; then
   echo "renaming branch: $BRANCH -> $NEW_BRANCH"
   git branch -m "$BRANCH" "$NEW_BRANCH"
   git push origin --delete "$BRANCH" 2>/dev/null || true
@@ -138,7 +151,7 @@ git fetch origin "$BASE"
 git rebase "origin/$BASE"
 git push -u --force-with-lease origin "$BRANCH"
 
-# 6. create the PR; body is the Linear link, plus the Error Tracking skeleton when -e is given
+# 6. create the PR; body is the Linear link (when there is one), plus the Error Tracking skeleton when -e is given
 LINEAR_URL="https://linear.app/plain/issue/${LINEAR_ID}"
 CALLOUTS=$(cat <<'BODYEOF'
 <!--
@@ -179,12 +192,14 @@ if [ -n "$ERROR_URL" ]; then
 <!-- Error payload or stack trace in a code block, plus the query, logs, or screenshot that proves the root cause. -->
 BODYEOF
 )
-else
+elif [ -n "$LINEAR_ID" ]; then
   BODY="> Fixes [__LINEAR_ID__](__LINEAR_URL__)"
+else
+  BODY=""
 fi
-BODY="${BODY}
+BODY="${BODY:+${BODY}
 
-${CALLOUTS}"
+}${CALLOUTS}"
 BODY="${BODY//__LINEAR_ID__/$LINEAR_ID}"
 BODY="${BODY//__LINEAR_URL__/$LINEAR_URL}"
 BODY="${BODY//__ERROR_URL__/$ERROR_URL}"

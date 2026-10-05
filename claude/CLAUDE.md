@@ -56,7 +56,7 @@ Do not push until all pass successfully.
 
 ## Linear
 
-Create Linear issues with the Linear MCP following the `create-linear-issue` skill; a PreToolUse hook on `save_issue` denies anything that breaks these rules. Every issue goes in team Platform, in a project (this week's Reactive Work project when nothing fits better), with a priority and at least one label.
+Only create Linear issues for team-plain repos, never for other repos (e.g. PewhProgrammer). Create them with the Linear MCP following the `create-linear-issue` skill; a PreToolUse hook on `save_issue` denies anything that breaks these rules. Every issue goes in team Platform, in a project (this week's Reactive Work project when nothing fits better), with a priority and at least one label.
 
 ## Github
 
