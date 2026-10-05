@@ -1,0 +1,30 @@
+#!/bin/bash
+set -euo pipefail
+
+PORT=9222
+PROFILE="$HOME/.chrome-agents"
+
+if curl -s --max-time 1 "http://127.0.0.1:$PORT/json/version" >/dev/null; then
+  echo "chrome-agents already running on :$PORT"
+  exit 0
+fi
+
+open -na "Google Chrome" --args \
+  --remote-debugging-port="$PORT" \
+  --user-data-dir="$PROFILE" \
+  --no-first-run \
+  --no-default-browser-check \
+  --disable-background-timer-throttling \
+  --disable-renderer-backgrounding \
+  --disable-backgrounding-occluded-windows
+
+for _ in $(seq 1 50); do
+  if curl -s --max-time 1 "http://127.0.0.1:$PORT/json/version" >/dev/null; then
+    echo "chrome-agents running on :$PORT"
+    exit 0
+  fi
+  sleep 0.2
+done
+
+echo "chrome-agents failed to start on :$PORT" >&2
+exit 1

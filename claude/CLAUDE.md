@@ -90,6 +90,14 @@ Current files:
 - Datadog API: `api.datadoghq.eu` (EU site), always use Python (curl drops DD- headers)
 - When checking anything in Datadog, use the API key from the `DD_API_KEY` environment variable
 
+## Browser (chrome-devtools MCP)
+
+All agents share one Chrome on port 9222 (`~/.claude/bin/chrome-agents` starts it; run it if tools fail to connect). Each agent works only in its own tabs:
+- Open your tab with `new_page` and pass its `pageId` on every call
+- Never `select_page`, `navigate_page`, or `close_page` a tab you did not open
+- Close your tabs when done
+- Need a different login than the shared profile? Pass `isolatedContext` to `new_page`
+
 ## Code style preferences
 
 - **Never add comments to code** unless the user explicitly asks for them. Code should be self-explanatory.
