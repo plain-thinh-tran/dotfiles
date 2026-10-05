@@ -98,7 +98,7 @@ threading.Thread(target=pump_stdin, daemon=True).start()
 threading.Thread(target=watch_requests, daemon=True).start()
 pump_stdout()
 code = child.wait()
-for path in (REQUEST, URL):
+for path in (REQUEST, URL, os.path.join(CHANNEL, "started")):
     try:
         os.remove(path)
     except FileNotFoundError:
