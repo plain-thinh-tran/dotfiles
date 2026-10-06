@@ -1,0 +1,25 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["findings", "checked_fine"],
+  "properties": {
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["severity", "title", "location", "failure", "fix", "evidence", "confidence"],
+        "properties": {
+          "severity": { "type": "string", "enum": ["breaking", "regression", "worth-knowing"] },
+          "title": { "type": "string" },
+          "location": { "type": "string" },
+          "failure": { "type": "string" },
+          "fix": { "type": "string" },
+          "evidence": { "type": "string" },
+          "confidence": { "type": "string", "enum": ["high", "medium", "low"] }
+        }
+      }
+    },
+    "checked_fine": { "type": "array", "items": { "type": "string" } }
+  }
+}
