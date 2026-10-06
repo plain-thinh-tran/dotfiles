@@ -11,10 +11,11 @@ REAL = os.environ.get("CLAUDE_RC_REAL", os.path.expanduser("~/.local/bin/claude"
 CHANNEL = f"/tmp/claude-rc/{os.getpid()}"
 REQUEST = os.path.join(CHANNEL, "request")
 URL = os.path.join(CHANNEL, "url")
+SKIP = os.path.join(CHANNEL, "skip")
 PREFIX = "claude-rc-"
 
 os.makedirs(CHANNEL, exist_ok=True)
-env = dict(os.environ, CLAUDE_RC_CHANNEL=CHANNEL)
+env = dict(os.environ, CLAUDE_RC_CHANNEL=CHANNEL, OPEN_PLAN_ANNOTATOR_SKIP_FILE=SKIP)
 child = subprocess.Popen([REAL, *sys.argv[1:]], stdin=subprocess.PIPE, stdout=subprocess.PIPE, env=env)
 lock = threading.Lock()
 
@@ -50,7 +51,12 @@ def swallow(line):
     resp = msg.get("response") or {}
     if msg.get("type") == "control_response" and str(resp.get("request_id", "")).startswith(PREFIX):
         body = resp.get("response") or {}
-        out = body.get("session_url") or resp.get("error") or "disabled"
+        url = body.get("session_url")
+        out = url or resp.get("error") or "disabled"
+        if url:
+            open(SKIP, "w").close()
+        elif not resp.get("error") and os.path.exists(SKIP):
+            os.remove(SKIP)
         tmp = URL + ".tmp"
         with open(tmp, "w") as f:
             f.write(out + "\n")
@@ -98,7 +104,7 @@ threading.Thread(target=pump_stdin, daemon=True).start()
 threading.Thread(target=watch_requests, daemon=True).start()
 pump_stdout()
 code = child.wait()
-for path in (REQUEST, URL, os.path.join(CHANNEL, "started")):
+for path in (REQUEST, URL, SKIP, os.path.join(CHANNEL, "started")):
     try:
         os.remove(path)
     except FileNotFoundError:
