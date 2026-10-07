@@ -12,9 +12,15 @@ Run `~/.claude/skills/remote/toggle.sh "ARG"`, with `ARG` the skill argument: `o
 
 If the output is a URL and no keepalive task is running in this session, start one: Bash `~/.claude/skills/remote/keepalive.sh`, `run_in_background: true`, `timeout: 7200000`. Conductor kills idle sessions after 30 minutes and phone messages do not count; a running background task blocks that.
 
-When the keepalive task finishes: output `RESTART` → start it again the same way, silently. `DONE` → do nothing. Do not restart on anything else. It stops itself after `off` or 4 hours.
+When the keepalive task finishes, the turn has no text at all, not even an acknowledgement:
 
-Reply with one line:
+- `RESTART` → start it again the same way, then end the turn.
+- `DONE` → end the turn immediately.
+- If the notification does not show the output, read it with one `tail -1` and apply the above.
+
+Do not restart on anything else. It stops itself after `off` or 4 hours.
+
+After running `toggle.sh`, reply with one line:
 
 - URL: "Remote Control on: <url>"
 - `disabled`: "Remote Control off."
