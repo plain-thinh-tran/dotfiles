@@ -133,6 +133,7 @@ link() {
 
 info "Creating symlinks..."
 link "$DOTFILES_DIR/zsh/.zshrc" "$HOME/.zshrc"
+link "$DOTFILES_DIR/zsh/bin/aws-profile-switcher" "$HOME/bin/aws-profile-switcher"
 link "$DOTFILES_DIR/git/.gitconfig" "$HOME/.gitconfig"
 link "$DOTFILES_DIR/tmux/.tmux.conf" "$HOME/.tmux.conf"
 link "$DOTFILES_DIR/gh/config.yml" "$HOME/.config/gh/config.yml"

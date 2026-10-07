@@ -1,0 +1,41 @@
+#!/bin/zsh
+
+first=(devlocal prod-uk dev-uk)
+last=(pewh)
+all=("${(@f)$(aws configure list-profiles)}")
+arr=()
+for p in $first; do (( ${all[(Ie)$p]} )) && arr+=$p; done
+for p in $all; do (( ${first[(Ie)$p]} || ${last[(Ie)$p]} )) || arr+=$p; done
+for p in $last; do (( ${all[(Ie)$p]} )) && arr+=$p; done
+
+echo "Available AWS profiles:"
+echo ""
+
+# Display options with spacing
+for i in {1..${#arr[@]}}; do
+    echo "$i) ${arr[$i]}"
+done
+echo "$((${#arr[@]} + 1))) Quit"
+echo ""
+
+# Get user selection
+echo -n "Select profile: "
+read choice
+
+if [[ "$choice" -eq $((${#arr[@]} + 1)) ]]; then
+    echo "QUIT"
+elif [[ "$choice" -ge 1 && "$choice" -le ${#arr[@]} ]]; then
+    opt="${arr[$choice]}"
+    export AWS_PROFILE="$opt"
+    export AWS_DEFAULT_PROFILE="$opt"
+    export AWS_EB_PROFILE="$opt"
+    export STAGE="$opt"
+
+    echo "✓ Switched to profile: $opt"
+    aws sts get-caller-identity --query '[Account,Arn]' --output text 2>/dev/null || aws sso login --profile "$opt"
+    if [[ -n "$(aws configure get sso_region --profile "$opt")" ]] && whence ssocred >/dev/null; then
+        ssocred "$opt"
+    fi
+else
+    echo "Invalid option"
+fi
