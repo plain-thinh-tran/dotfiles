@@ -69,7 +69,6 @@ BASE="$(jq -r .baseRefName "$OUT_DIR/meta.json")"
 TITLE="$(jq -r .title "$OUT_DIR/meta.json")"
 TICKETS="$(jq -r '[.title, .body, .headRefName] | join(" ")' "$OUT_DIR/meta.json" | grep -oE '[A-Z]{2,6}-[0-9]{2,}' | sort -u || true)"
 
-gh pr checks "$PR" -R "$REPO" --json name,state,bucket,link >"$OUT_DIR/checks.json" 2>/dev/null || echo '[]' >"$OUT_DIR/checks.json"
 
 gh api graphql -F owner="$OWNER" -F name="$NAME" -F pr="$PR" -f query='
 query($owner: String!, $name: String!, $pr: Int!) {
@@ -134,19 +133,11 @@ fi
 {
   echo "# PR #$PR: $TITLE"
   echo
-  jq -r '"- url: \(.url)\n- author: \(.author.login)\n- state: \(.state)\(if .isDraft then " (draft)" else "" end)\n- base: \(.baseRefName) <- \(.headRefName) @ \(.headRefOid[0:10])\n- mergeable: \(.mergeable), mergeState: \(.mergeStateStatus), reviewDecision: \(.reviewDecision // "none")\n- size: +\(.additions) -\(.deletions) in \(.changedFiles) files\n- labels: \([.labels[].name] | join(", "))"' "$OUT_DIR/meta.json"
+  jq -r '"- url: \(.url)\n- author: \(.author.login)\n- state: \(.state)\(if .isDraft then " (draft)" else "" end)\n- base: \(.baseRefName) <- \(.headRefName) @ \(.headRefOid[0:10])\n- size: +\(.additions) -\(.deletions) in \(.changedFiles) files\n- labels: \([.labels[].name] | join(", "))"' "$OUT_DIR/meta.json"
   echo "- tickets: $(echo "$TICKETS" | tr '\n' ' ')"
   if [ -n "$LOCAL_REF" ]; then
     echo "- local ref: $LOCAL_REF (read files with: git show $LOCAL_REF:<path>)"
   fi
-  echo
-  echo "## CI"
-  jq -r '
-    if length == 0 then "no checks reported"
-    else
-      (group_by(.bucket) | map("- \(.[0].bucket): \(length)") | .[]),
-      (map(select(.bucket == "fail")) | .[] | "  - FAIL \(.name) \(.link)")
-    end' "$OUT_DIR/checks.json"
   echo
   echo "## Review Threads"
   jq -r '
@@ -155,10 +146,6 @@ fi
     | if length == 0 then "no unresolved threads"
       else .[] | "- \(.path):\(.line // "?") \(.comments.nodes[0].author.login): \(.comments.nodes[0].body | gsub("\n"; " ") | .[0:160]) \(.comments.nodes[0].url)"
       end' "$OUT_DIR/reviews.json"
-  jq -r '
-    .data.repository.pullRequest.reviews.nodes
-    | map(select(.state == "CHANGES_REQUESTED" or .state == "APPROVED"))
-    | .[] | "- review \(.state) by \(.author.login) at \(.submittedAt)"' "$OUT_DIR/reviews.json"
   echo
   echo "## Changed Files"
   sed 's/^/- /' "$OUT_DIR/files.txt"
@@ -187,4 +174,4 @@ fi
 
 cat "$SUMMARY"
 echo
-echo "context dir: $OUT_DIR (diff.patch, meta.json, checks.json, reviews.json, author-prs.json, author-overlap.json, ticket-prs.json)"
+echo "context dir: $OUT_DIR (diff.patch, meta.json, reviews.json, author-prs.json, author-overlap.json, ticket-prs.json)"

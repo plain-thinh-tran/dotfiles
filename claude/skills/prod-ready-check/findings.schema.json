@@ -10,7 +10,7 @@
         "additionalProperties": false,
         "required": ["severity", "title", "location", "failure", "fix", "evidence", "confidence"],
         "properties": {
-          "severity": { "type": "string", "enum": ["breaking", "regression", "worth-knowing"] },
+          "severity": { "type": "string", "enum": ["breaking", "regression", "worth-knowing", "dead-code", "refactor"] },
           "title": { "type": "string" },
           "location": { "type": "string" },
           "failure": { "type": "string" },

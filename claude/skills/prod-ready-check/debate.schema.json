@@ -1,0 +1,23 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["positions"],
+  "properties": {
+    "positions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "stance", "severity", "reason", "evidence", "revised_fix"],
+        "properties": {
+          "id": { "type": "string" },
+          "stance": { "type": "string", "enum": ["agree", "revise", "disagree", "withdraw"] },
+          "severity": { "type": "string", "enum": ["breaking", "regression", "worth-knowing", "dead-code", "refactor"] },
+          "reason": { "type": "string" },
+          "evidence": { "type": "string" },
+          "revised_fix": { "type": ["string", "null"] }
+        }
+      }
+    }
+  }
+}
