@@ -163,7 +163,18 @@ for cmd in "$DOTFILES_DIR/claude/commands/"*; do
   link "$cmd" "$HOME/.claude/commands/$(basename "$cmd")"
 done
 
-for skill_dir in "$DOTFILES_DIR/claude/skills/"*/; do
+skill_dirs=()
+for dir in "$DOTFILES_DIR/claude/skills/"*/; do
+  if [ -f "$dir/SKILL.md" ]; then
+    skill_dirs+=("$dir")
+  else
+    for child in "$dir"*/; do
+      [ -f "$child/SKILL.md" ] && skill_dirs+=("$child")
+    done
+  fi
+done
+
+for skill_dir in "${skill_dirs[@]}"; do
   skill_name="$(basename "$skill_dir")"
   dest_dir="$HOME/.claude/skills/$skill_name"
   if [ -L "$dest_dir" ]; then

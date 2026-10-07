@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>TITLE</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+:root{--ink:#1F1F28;--green:#1BD379;--green2:#00C770;--deep:#074022;--pale:#F3FCF5;--soft:#F0F0F5;--line:#DCE8E0}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;background:#E7F3EA;overflow:hidden;font-family:Inter,sans-serif;color:var(--ink)}
+.mono{font-family:'JetBrains Mono',monospace}
+#viewport{position:fixed;inset:0;display:flex;align-items:center;justify-content:center}
+#deck{width:1920px;height:1080px;position:relative;flex:none}
+.slide{position:absolute;inset:0;background:var(--pale);padding:72px 120px;display:none;flex-direction:column}
+.slide.active{display:flex;animation:in .4s cubic-bezier(.2,.7,.2,1)}
+@keyframes in{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:none}}
+.kicker{font-family:'JetBrains Mono',monospace;font-size:24px;color:var(--deep);margin-bottom:18px}
+h1{font-size:96px;line-height:1.1;letter-spacing:-.035em;font-weight:700;padding:4px 0}
+h2{font-size:60px;line-height:1.12;letter-spacing:-.03em;font-weight:700}
+.lede{font-size:34px;line-height:1.5;color:#3A3A46;margin-top:28px;max-width:1450px}
+.logo{width:96px;height:96px;border-radius:22px;margin-bottom:44px}
+
+.cards{display:grid;grid-template-columns:repeat(3,1fr);gap:36px;margin-top:64px}
+.card{background:#fff;border:1px solid var(--line);border-radius:24px;padding:40px;display:flex;flex-direction:column;gap:22px}
+.card h3{font-size:40px;line-height:1.2;letter-spacing:-.02em}
+.card p{font-size:26px;line-height:1.5;color:#3A3A46}
+
+.flow{position:relative;width:1680px;height:800px;margin-top:28px}
+.flow svg{position:absolute;inset:0}
+.group{position:absolute;border:2px dashed #B9D6C3;border-radius:24px}
+.group span{position:absolute;top:-17px;left:28px;background:var(--pale);padding:0 12px;font-family:'JetBrains Mono',monospace;font-size:20px;color:var(--deep)}
+.node{position:absolute;background:#fff;border:1px solid var(--line);border-radius:18px;padding:18px 22px;display:flex;flex-direction:column;justify-content:center;gap:6px;box-shadow:0 10px 30px rgba(7,64,34,.06)}
+.node b{font-size:25px;line-height:1.25}
+.node small{font-family:'JetBrains Mono',monospace;font-size:16px;line-height:1.45;color:#6B6B7A}
+.node.ink{background:var(--ink);border-color:var(--ink);color:#fff}
+.node.ink small{color:#A9A9B6}
+.node.green{background:var(--green);border-color:var(--green)}
+.node.green small{color:var(--deep)}
+.node.muted{background:var(--soft);border-color:#E3E3EA;color:#6B6B7A;box-shadow:none}
+.step{position:absolute;width:38px;height:38px;border-radius:50%;background:var(--green);color:var(--ink);font-weight:700;font-size:19px;display:flex;align-items:center;justify-content:center;border:3px solid var(--pale)}
+.lbl{position:absolute;font-family:'JetBrains Mono',monospace;font-size:16px;color:var(--deep);white-space:nowrap;background:var(--pale);padding:0 6px}
+.pill{font-family:'JetBrains Mono',monospace;font-size:17px;background:var(--pale);border:1px solid var(--line);border-radius:999px;padding:3px 14px;color:var(--deep);white-space:nowrap}
+
+[data-step]{opacity:0;transform:translateY(10px);transition:opacity .45s ease,transform .45s cubic-bezier(.2,.7,.2,1)}
+[data-step].shown{opacity:1;transform:none}
+#progress{position:fixed;left:0;bottom:0;height:5px;background:var(--green)}
+</style>
+</head>
+<body>
+<div id="viewport"><div id="deck">
+
+<section class="slide" style="justify-content:center">
+  <!-- LOGO: inline the Plain logomark SVG here with class="logo" -->
+  <div class="kicker">kicker</div>
+  <h1>Headline Claim</h1>
+  <p class="lede">One or two sentences.</p>
+</section>
+
+<section class="slide">
+  <div class="kicker">kicker</div>
+  <h2>Slide Claim as a Title Case Headline</h2>
+  <div class="cards">
+    <div data-step="0" class="card"><h3>First</h3><p>One sentence.</p></div>
+    <div data-step="1" class="card"><h3>Second</h3><p>One sentence.</p></div>
+    <div data-step="2" class="card"><h3>Third</h3><p>One sentence.</p></div>
+  </div>
+</section>
+
+<section class="slide">
+  <div class="kicker">How it works</div>
+  <h2>Diagram Slide</h2>
+  <div class="flow">
+    <svg viewBox="0 0 1680 800" fill="none">
+      <defs>
+        <marker id="a3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#074022"/></marker>
+      </defs>
+      <path data-step="1" d="M300 210H372" stroke="#074022" stroke-width="3" marker-end="url(#a3)"/>
+    </svg>
+    <div class="node" style="left:0;top:130px;width:300px;height:160px"><b>Source</b><small>detail</small></div>
+    <div data-step="1" class="group" style="left:340px;top:60px;width:500px;height:320px"><span>group</span></div>
+    <div data-step="1" class="node ink" style="left:380px;top:130px;width:300px;height:160px"><b>Target</b><small>detail</small></div>
+    <div data-step="1" class="step" style="left:317px;top:170px">1</div>
+  </div>
+</section>
+
+</div></div>
+<div id="progress"></div>
+<script>
+const slides=[...document.querySelectorAll('.slide')];
+const deck=document.getElementById('deck');
+let i=0,step=0;
+const maxStep=s=>Math.max(0,...[...s.querySelectorAll('[data-step]')].map(e=>+e.dataset.step));
+function fit(){deck.style.transform=`scale(${Math.min(innerWidth/1920,innerHeight/1080)})`}
+function render(){
+  slides.forEach((s,k)=>s.classList.toggle('active',k===i));
+  slides[i].querySelectorAll('[data-step]').forEach(e=>e.classList.toggle('shown',+e.dataset.step<=step));
+  document.getElementById('progress').style.width=`${((i+1)/slides.length)*100}%`;
+  document.body.dataset.pos=`${i}:${step}`;
+}
+function next(){if(step<maxStep(slides[i])){step++}else if(i<slides.length-1){i++;step=0}render()}
+function prev(){if(step>0){step--}else if(i>0){i--;step=maxStep(slides[i])}render()}
+addEventListener('keydown',e=>{
+  if(['ArrowRight','ArrowDown','PageDown',' '].includes(e.key)){e.preventDefault();next()}
+  else if(['ArrowLeft','ArrowUp','PageUp'].includes(e.key)){e.preventDefault();prev()}
+  else if(e.key==='f'){document.fullscreenElement?document.exitFullscreen():document.documentElement.requestFullscreen()}
+});
+addEventListener('click',e=>e.clientX>innerWidth/3?next():prev());
+addEventListener('resize',fit);fit();render();
+</script>
+</body>
+</html>
