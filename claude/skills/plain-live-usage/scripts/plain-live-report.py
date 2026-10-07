@@ -1,14 +1,18 @@
 #!/usr/bin/env python3
 """plain:live usage report. All times printed in UTC.
 
-  sessions <slack-dump.txt>       parse a saved slack_read_channel dump of #dev-audit (detailed format)
-  report [--from now-7d] [--env dev-uk]
-                                  Datadog: invokes, fallbacks and bridge failures
+  sessions <slack-dump.txt>
+      Parse a saved slack_read_channel dump of #dev-audit (detailed format): one row per
+      session start plus a per dev summary.
+  report [--from now-7d] [--env dev-uk] [--sessions <slack-dump.txt>] [--repo <services checkout>]
+      Datadog invokes, fallbacks and bridge failures. With --sessions, each failing service
+      lists the sessions that could have caused it. With --repo, services show their trigger.
 """
 
 import argparse
 import collections
 import datetime
+import glob
 import json
 import os
 import re
@@ -18,7 +22,10 @@ import urllib.error
 import urllib.request
 
 SITE = "https://api.datadoghq.eu"
-SWEEP_MIN_SERVICES = 5
+SWEEP_MIN_SERVICES = 3
+QUIET_MAX_INVOKES = 5
+SWEEP_PAD = datetime.timedelta(minutes=5)
+ATTRIBUTION_LOOKBACK = datetime.timedelta(hours=24)
 SLACK_TZ_OFFSETS = {"CEST": 2, "CET": 1, "BST": 1, "GMT": 0, "UTC": 0}
 ERROR_CLASSES = [
     ("env-missing", r"Environment variable (\w+) not found"),
@@ -36,6 +43,10 @@ ERROR_CLASSES = [
 
 def progress(text):
     print(text, file=sys.stderr, flush=True)
+
+
+def parse_ts(value):
+    return datetime.datetime.fromisoformat(value.replace("Z", "+00:00")).replace(tzinfo=None)
 
 
 def post(path, body):
@@ -57,20 +68,27 @@ def post(path, body):
     raise RuntimeError(f"Datadog request failed after retries: {path}")
 
 
-def daily_counts(query, frm):
+def aggregate(query, frm, interval=None):
+    compute = {"aggregation": "count"}
+    if interval is not None:
+        compute.update({"type": "timeseries", "interval": interval})
     body = {
         "filter": {"query": query, "from": frm, "to": "now"},
-        "compute": [{"aggregation": "count", "type": "timeseries", "interval": "1d"}],
+        "compute": [compute],
         "group_by": [{"facet": "service", "limit": 1000}],
     }
+    return post("/api/v2/logs/analytics/aggregate", body)["data"]["buckets"]
+
+
+def daily_counts(query, frm):
     result = {}
-    for bucket in post("/api/v2/logs/analytics/aggregate", body)["data"]["buckets"]:
-        series = {p["time"][:10]: int(p["value"]) for p in bucket["computes"]["c0"] if p["value"]}
-        result[bucket["by"]["service"]] = series
+    for bucket in aggregate(query, frm, "1d"):
+        result[bucket["by"]["service"]] = {p["time"][:10]: int(p["value"]) for p in bucket["computes"]["c0"] if p["value"]}
     return result
 
 
 def fetch_events(query, frm, label):
+    total = sum(int(b["computes"]["c0"]) for b in aggregate(query, frm))
     # Some bridge failure events embed the whole Lambda event; pages above ~5 truncate mid-stream.
     events, cursor = [], None
     while True:
@@ -89,7 +107,7 @@ def fetch_events(query, frm, label):
                 "msg": message[:4000],
             })
         if len(events) % 100 < 5:
-            progress(f"  {label}: {len(events)} events")
+            progress(f"  {label}: {len(events)}/{total}")
         cursor = page.get("meta", {}).get("page", {}).get("after")
         if cursor is None:
             return events
@@ -104,25 +122,141 @@ def classify(message):
     return "other", first.group(1) if first else message[:100]
 
 
-def print_by_service(events):
+def service_id_to_name(service_id):
+    stem = re.sub(r"Service$", "", service_id)
+    return re.sub(r"(?<!^)(?=[A-Z])", "-", stem).lower()
+
+
+def read_blueprints(repo):
+    by_name = {}
+    for path in glob.glob(os.path.join(repo, "lambdas", "*", "blueprint.yaml")):
+        text = open(path).read()
+        name = re.search(r"^service: (\S+)", text, re.M)
+        trigger = re.search(r"^triggers:\s*\n {2}(\w+):", text, re.M)
+        if name is not None:
+            by_name[name.group(1)] = trigger.group(1) if trigger else "?"
+    return by_name
+
+
+def parse_sessions(dump):
+    raw = open(dump).read()
+    try:
+        text = json.loads(raw)["messages"]
+    except (json.JSONDecodeError, KeyError):
+        text = raw
+    blocks = text.split("=== Message from ")[1:]
+    rows = []
+    for message in blocks:
+        if "plain_live_session_started" not in message:
+            continue
+        def field(pattern):
+            match = re.search(pattern, message)
+            return match.group(1).replace("`", "").strip() if match else ""
+        start = to_utc(field(r"at (\S+ \S+ \w+)"))
+        rows.append({
+            "start": start,
+            "dev": field(r"mailto:([^@|]+)"),
+            "service_ids": [s.strip() for s in field(r"\*Services\*: (.*)").split(",") if s.strip()],
+            "origin": normalize_origin(field(r"\*Origin\*: (.*)")),
+            "git": field(r"\*Git\*: (.*)"),
+        })
+    oldest = re.findall(r"at (\S+ \S+ \w+) ===", text)
+    progress(f"{len(rows)} session starts from {len(blocks)} messages; oldest message {to_utc(oldest[-1]).isoformat() if oldest else 'unknown'}")
+    if not blocks:
+        progress("No '=== Message from' blocks: re-read the channel with the default detailed response_format")
+    return sorted(rows, key=lambda r: r["start"])
+
+
+def normalize_origin(origin):
+    if origin.startswith("Cursor cloud agent"):
+        return "cloud-agent"
+    return origin if origin != "" else "unknown"
+
+
+def to_utc(stamp):
+    match = re.match(r"(\S+ \S+) (\w+)", stamp)
+    local = datetime.datetime.strptime(match.group(1), "%Y-%m-%d %H:%M:%S")
+    return local - datetime.timedelta(hours=SLACK_TZ_OFFSETS.get(match.group(2), 0))
+
+
+def print_sessions(rows):
+    print("## Session starts (UTC)")
+    for row in rows:
+        print(f"  {row['start']:%Y-%m-%d %H:%M} | {row['dev']} | {row['origin']} | {', '.join(row['service_ids'])} | {row['git']}")
+    print("\n## Per dev")
+    by_dev = collections.defaultdict(list)
+    for row in rows:
+        by_dev[row["dev"]].append(row)
+    for dev, starts in sorted(by_dev.items(), key=lambda kv: -len(kv[1])):
+        origins = collections.Counter(r["origin"] for r in starts)
+        services = sorted({s for r in starts for s in r["service_ids"]})
+        branches = sorted({r["git"].split(" @ ")[0] for r in starts})
+        churn = sum(1 for a, b in zip(starts, starts[1:]) if b["start"] - a["start"] <= datetime.timedelta(minutes=15))
+        print(f"  {dev}: {len(starts)} starts {dict(origins)} | {starts[0]['start']:%m-%d %H:%M} to {starts[-1]['start']:%m-%d %H:%M} | restarts within 15 min: {churn}")
+        print(f"    services: {', '.join(services)}")
+        print(f"    branches: {', '.join(branches)}")
+
+
+def sweep_windows(failures):
+    services_per_minute = collections.defaultdict(set)
+    for event in failures:
+        services_per_minute[event["ts"][:16]].add(event["service"])
+    minutes = sorted(parse_ts(m + ":00") for m, s in services_per_minute.items() if len(s) >= SWEEP_MIN_SERVICES)
+    windows = []
+    for minute in minutes:
+        if windows and minute - windows[-1][1] <= 2 * SWEEP_PAD:
+            windows[-1][1] = minute
+        else:
+            windows.append([minute, minute])
+    return [(start - SWEEP_PAD, end + SWEEP_PAD + datetime.timedelta(minutes=1)) for start, end in windows]
+
+
+def candidates(service, events, sessions):
+    forwarding = [s for s in sessions if service in {service_id_to_name(i) for i in s["service_ids"]}]
+    per_dev = collections.Counter()
+    unmatched = 0
+    for event in events:
+        at = parse_ts(event["ts"])
+        devs = {s["dev"] for s in forwarding if at - ATTRIBUTION_LOOKBACK <= s["start"] <= at}
+        if not devs:
+            unmatched += 1
+        for dev in devs:
+            per_dev[dev] += 1
+    parts = [f"{dev}:{count}" for dev, count in per_dev.most_common()]
+    if unmatched:
+        parts.append(f"no audit session:{unmatched}")
+    return ", ".join(parts)
+
+
+def print_failure_class(events, sessions, triggers):
     by_service = collections.defaultdict(list)
     for event in events:
-        by_service[event["service"]].append(event["ts"])
-    for service, times in sorted(by_service.items(), key=lambda kv: -len(kv[1])):
-        hours = len({t[:13] for t in times})
-        print(f"    {service}: {len(times)} | {times[0][:16]} to {times[-1][:16]} | {hours} active hours")
+        by_service[event["service"]].append(event)
+    for service, service_events in sorted(by_service.items(), key=lambda kv: -len(kv[1])):
+        hourly = collections.Counter(e["ts"][5:13] for e in service_events)
+        trigger = f" [{triggers.get(service, '?')}]" if triggers else ""
+        print(f"    {service}{trigger}: {len(service_events)} | {service_events[0]['ts'][:16]} to {service_events[-1]['ts'][:16]}")
+        print(f"      hourly: {' '.join(f'{h}h:{n}' for h, n in sorted(hourly.items()))}")
+        if sessions is not None:
+            print(f"      candidates: {candidates(service, service_events, sessions)}")
 
 
 def report(args):
+    sessions = parse_sessions(args.sessions) if args.sessions else None
+    triggers = read_blueprints(args.repo) if args.repo else {}
+    if sessions is not None:
+        print_sessions(sessions)
+        print()
+
     base = f"env:{args.env}"
     progress("invokes...")
     invokes = daily_counts(f'{base} "plain:live publishing invoke"', args.frm)
-    busy = {s: v for s, v in invokes.items() if sum(v.values()) > SWEEP_MIN_SERVICES}
+    busy = {s: v for s, v in invokes.items() if sum(v.values()) > QUIET_MAX_INVOKES}
     quiet = sorted(s for s in invokes if s not in busy)
     print(f"## Invokes forwarded ({args.frm}): {sum(sum(v.values()) for v in invokes.values())} across {len(invokes)} services")
     for service, series in sorted(busy.items(), key=lambda kv: -sum(kv[1].values())):
         print(f"  {service}: {sum(series.values())} {series}")
-    print(f"  {len(quiet)} services with <= {SWEEP_MIN_SERVICES} invokes (likely sweeps): {', '.join(quiet)}")
+    print(f"  {len(quiet)} services with <= {QUIET_MAX_INVOKES} invokes (likely sweeps)")
 
     progress("fallbacks...")
     fallbacks = collections.defaultdict(list)
@@ -135,78 +269,45 @@ def report(args):
 
     progress("bridge failures...")
     failures = fetch_events(f'{base} "plain:live bridge failed"', args.frm, "failures")
-    services_per_minute = collections.defaultdict(set)
-    for event in failures:
-        services_per_minute[event["ts"][:16]].add(event["service"])
-    sweep_minutes = {m for m, s in services_per_minute.items() if len(s) >= SWEEP_MIN_SERVICES}
-    sweeps = [e for e in failures if e["ts"][:16] in sweep_minutes]
-    real = [e for e in failures if e["ts"][:16] not in sweep_minutes]
+    windows = sweep_windows(failures)
+    in_sweep = lambda e: any(start <= parse_ts(e["ts"]) <= end for start, end in windows)
+    sweeps = [e for e in failures if in_sweep(e)]
+    real = [e for e in failures if not in_sweep(e)]
 
-    print(f"\n## Bridge failures: {len(failures)} ({len(sweeps)} in sweep minutes, {len(real)} other)")
-    if sweep_minutes:
-        print(f"  Sweep minutes (>= {SWEEP_MIN_SERVICES} services failing in one minute): {', '.join(sorted(sweep_minutes))}")
+    print(f"\n## Bridge failures: {len(failures)} ({len(sweeps)} in sweeps, {len(real)} other)")
+    if sessions is not None:
+        print("  candidates = failures per dev who started a session forwarding that service in the 24h before each failure")
+    for start, end in windows:
+        inside = [e for e in sweeps if start <= parse_ts(e["ts"]) <= end]
+        classes = collections.Counter(classify(e["msg"])[0] for e in inside)
+        print(f"  Sweep {start:%m-%d %H:%M} to {end:%H:%M}: {len(inside)} failures on {len({e['service'] for e in inside})} services {dict(classes)}")
+
     by_class = collections.defaultdict(list)
     for event in real:
         name, detail = classify(event["msg"])
         by_class[(name, detail, event["phase"])].append(event)
     for (name, detail, phase), events in sorted(by_class.items(), key=lambda kv: -len(kv[1])):
         print(f"\n### {len(events)}x {name} {detail} (phase {phase})")
-        print_by_service(events)
-
-
-def to_utc(stamp):
-    match = re.match(r"(\S+ \S+) (\w+)", stamp)
-    if match is None or match.group(2) not in SLACK_TZ_OFFSETS:
-        return stamp
-    local = datetime.datetime.strptime(match.group(1), "%Y-%m-%d %H:%M:%S")
-    return (local - datetime.timedelta(hours=SLACK_TZ_OFFSETS[match.group(2)])).strftime("%Y-%m-%dT%H:%M UTC")
-
-
-def sessions(args):
-    raw = open(args.dump).read()
-    try:
-        text = json.loads(raw)["messages"]
-    except (json.JSONDecodeError, KeyError):
-        text = raw
-    blocks = text.split("=== Message from ")[1:]
-    rows = []
-    for message in blocks:
-        if "plain_live" not in message:
-            continue
-        def field(pattern):
-            match = re.search(pattern, message)
-            return match.group(1).replace("`", "") if match else ""
-        rows.append(" | ".join([
-            to_utc(field(r"at (\S+ \S+ \w+)")),
-            field(r"\*Action\*: (\S+)"),
-            field(r"mailto:([^@|]+)"),
-            field(r"\*Services\*: (.*)"),
-            field(r"\*Origin\*: (.*)"),
-            field(r"\*Git\*: (.*)"),
-        ]))
-    for row in rows:
-        print(row)
-    oldest = re.findall(r"at (\S+ \S+ \w+) ===", text)
-    progress(f"{len(rows)} plain:live rows from {len(blocks)} messages; oldest message {to_utc(oldest[-1]) if oldest else 'unknown'}")
-    if not blocks:
-        progress("No '=== Message from' blocks: re-read the channel with the default detailed response_format")
+        print_failure_class(events, sessions, triggers)
 
 
 def main():
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest="command", required=True)
-    parse_sessions = sub.add_parser("sessions")
-    parse_sessions.add_argument("dump")
+    parse_sessions_cmd = sub.add_parser("sessions")
+    parse_sessions_cmd.add_argument("dump")
     parse_report = sub.add_parser("report")
     parse_report.add_argument("--from", dest="frm", default="now-7d")
     parse_report.add_argument("--env", default="dev-uk")
+    parse_report.add_argument("--sessions")
+    parse_report.add_argument("--repo")
     args = parser.parse_args()
     if args.command == "sessions":
-        sessions(args)
-    else:
-        if "DD_API_KEY" not in os.environ or "DD_APP_KEY" not in os.environ:
-            sys.exit("DD_API_KEY and DD_APP_KEY must be set")
-        report(args)
+        print_sessions(parse_sessions(args.dump))
+        return
+    if "DD_API_KEY" not in os.environ or "DD_APP_KEY" not in os.environ:
+        sys.exit("DD_API_KEY and DD_APP_KEY must be set")
+    report(args)
 
 
 if __name__ == "__main__":
