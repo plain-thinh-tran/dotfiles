@@ -1,6 +1,6 @@
 ---
 name: create-pr
-description: Create a pull request with rebase, Linear issue link, and concise description.
+description: Create a pull request with rebase, Linear issue link, and a lean description with a flow diagram. Also use when writing or editing a PR description.
 allowed-tools: Bash, Read, Grep, Glob
 ---
 
@@ -22,13 +22,11 @@ Prerequisite (team-plain repos only): a Linear id. If none exists, create it wit
 
 Before running the script, fetch the Linear issue (Linear MCP `get_issue`). It is an Error Tracking issue when the description contains a `https://app.datadoghq.eu/error-tracking/issue/<id>` link. These are created by Datadog and usually sit in the "Error Tracking Issues" milestone.
 
-For those, pass the link with `-e`. The script then adds it to the `> Fixes` line and scaffolds a body with a summary, `## Why`, and `## Evidence`, each carrying an HTML comment placeholder. Once the PR is up, replace the placeholders with `gh pr edit <number> --body-file <file>`:
+For those, pass the link with `-e`. The script then adds it to the `> Fixes` line and scaffolds a summary and `## Why` with placeholders. Fill them per `~/dotfiles/PR-DESCRIPTION-STYLE.md`.
 
-- Summary: what changed, in one or two sentences. Add an ASCII diagram of the affected path (before vs after, or read vs write) only when it clarifies the fix.
-- Why: the root cause. What triggers the error, which caller or data hits it, and why it happens (legacy rows, new caller, race).
-- Evidence: fill the error tracking line (error type and message, service, event count and window, whether it still happens) from the Datadog issue. Add the error payload or stack trace in a code block, and the query, logs, or screenshot that proves the root cause.
+## Description
 
-Adapt to the fix: drop the diagram or any evidence that adds nothing, add sections when the change needs them (rollout, backfill, follow ups). Delete leftover placeholder comments. Reference: [team-plain/services#11040](https://github.com/team-plain/services/pull/11040).
+Write and edit every PR description by `~/dotfiles/PR-DESCRIPTION-STYLE.md`: lean shape, diagram choice, an example, and how to edit without overwriting.
 
 ## Before running
 

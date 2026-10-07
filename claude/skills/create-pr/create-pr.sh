@@ -179,17 +179,11 @@ if [ -n "$ERROR_URL" ]; then
   BODY=$(cat <<'BODYEOF'
 > Fixes [__LINEAR_ID__](__LINEAR_URL__), [Error Tracking Issue](__ERROR_URL__)
 
-<!-- What changed, in one or two sentences. Optional: ASCII diagram of the affected path, before vs after. -->
+<!-- What changed, in one sentence. -->
 
 ## Why
 
-<!-- Root cause: what triggers the error, who or what hits it, and why it happens (legacy data, new caller, race, etc). -->
-
-## Evidence
-
-[Datadog error tracking issue](__ERROR_URL__): `<ErrorType: message>`, `<service>`, <N> events in <window>.
-
-<!-- Error payload or stack trace in a code block, plus the query, logs, or screenshot that proves the root cause. -->
+<!-- Root cause in one plain sentence, then the diagram that best shows the flow, then numbered steps walking it. See ~/dotfiles/PR-DESCRIPTION-STYLE.md. -->
 BODYEOF
 )
 elif [ -n "$LINEAR_ID" ]; then
