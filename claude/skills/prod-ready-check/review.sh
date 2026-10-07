@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
-# Blind, read-only Codex review of a PR gathered by gather.sh.
-# Usage: codex-review.sh <context-dir>   (writes codex.json and codex.log there)
-# Env: CODEX_MODEL (default gpt-5.6-sol), CODEX_EFFORT (default high)
+# Blind, read-only peer review of a PR gathered by gather.sh.
+# Usage: review.sh <context-dir> <codex|grok>   (writes <peer>.json and <peer>.log there)
+# Env: see peers.sh
 set -euo pipefail
 
-CTX="${1:?usage: codex-review.sh <context-dir>}"
+CTX="${1:?usage: review.sh <context-dir> <codex|grok>}"
+PEER="${2:?usage: review.sh <context-dir> <codex|grok>}"
 CTX="$(cd "$CTX" && pwd)"
 SKILL_DIR="$(cd "$(dirname "$0")" && pwd)"
-MODEL="${CODEX_MODEL:-gpt-5.6-sol}"
-EFFORT="${CODEX_EFFORT:-high}"
+source "$SKILL_DIR/peers.sh"
+peer_name "$PEER" >/dev/null
 
-command -v codex >/dev/null || { echo "codex not installed" >&2; exit 1; }
 [ -f "$CTX/meta.json" ] || { echo "$CTX/meta.json missing, run gather.sh first" >&2; exit 1; }
 
 REPO_DIR="$(git -C "$CTX" rev-parse --show-toplevel 2>/dev/null || pwd)"
@@ -36,15 +36,7 @@ Return every finding in the schema. Use worth-knowing for non-blocking items. Li
 EOF
 )"
 
-codex exec \
-  -m "$MODEL" \
-  -c "model_reasoning_effort=\"$EFFORT\"" \
-  -s read-only \
-  -C "$REPO_DIR" \
-  --ephemeral \
-  --output-schema "$SKILL_DIR/findings.schema.json" \
-  -o "$CTX/codex.json" \
-  "$PROMPT" >"$CTX/codex.log" 2>&1
+run_peer "$PEER" "$REPO_DIR" "$SKILL_DIR/findings.schema.json" "$CTX/$PEER.json" "$CTX/$PEER.log" "$PROMPT"
 
-jq -e '.findings' "$CTX/codex.json" >/dev/null
-echo "codex ($MODEL) findings: $(jq '.findings | length' "$CTX/codex.json") -> $CTX/codex.json"
+jq -e '.findings' "$CTX/$PEER.json" >/dev/null
+echo "$PEER ($(peer_model "$PEER")) findings: $(jq '.findings | length' "$CTX/$PEER.json") -> $CTX/$PEER.json"
