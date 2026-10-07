@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 """plain:live usage report. All times printed in UTC.
 
-  sessions <slack-dump.txt>
+  sessions <slack-dump.txt> [--day YYYY-MM-DD | --all]
       Parse a saved slack_read_channel dump of #dev-audit (detailed format): one row per
-      session start plus a per dev summary.
-  report [--from now-7d] [--env dev-uk] [--sessions <slack-dump.txt>] [--repo <services checkout>]
-      Datadog invokes, fallbacks and bridge failures. With --sessions, each failing service
-      lists the sessions that could have caused it. With --repo, services show their trigger.
+      session start plus a per dev summary. Defaults to sessions started today (local day).
+  report --sessions <slack-dump.txt> [--day YYYY-MM-DD] [--repo <services checkout>] [--env dev-uk]
+  report --from now-7d [--sessions <slack-dump.txt>] [--repo <services checkout>]
+      Datadog invokes, fallbacks and bridge failures. By default the window runs from the first
+      session started on --day (today) to the end of that day. --from switches to a rolling
+      window. Each failing service lists the devs whose sessions could have caused it, and with
+      --repo its blueprint trigger.
 """
 
 import argparse
@@ -68,31 +71,32 @@ def post(path, body):
     raise RuntimeError(f"Datadog request failed after retries: {path}")
 
 
-def aggregate(query, frm, interval=None):
+def aggregate(query, window, interval=None):
     compute = {"aggregation": "count"}
     if interval is not None:
         compute.update({"type": "timeseries", "interval": interval})
     body = {
-        "filter": {"query": query, "from": frm, "to": "now"},
+        "filter": {"query": query, "from": window[0], "to": window[1]},
         "compute": [compute],
         "group_by": [{"facet": "service", "limit": 1000}],
     }
     return post("/api/v2/logs/analytics/aggregate", body)["data"]["buckets"]
 
 
-def daily_counts(query, frm):
+def invoke_counts(query, window, interval):
+    width = 13 if interval == "1h" else 10
     result = {}
-    for bucket in aggregate(query, frm, "1d"):
-        result[bucket["by"]["service"]] = {p["time"][:10]: int(p["value"]) for p in bucket["computes"]["c0"] if p["value"]}
+    for bucket in aggregate(query, window, interval):
+        result[bucket["by"]["service"]] = {p["time"][:width]: int(p["value"]) for p in bucket["computes"]["c0"] if p["value"]}
     return result
 
 
-def fetch_events(query, frm, label):
-    total = sum(int(b["computes"]["c0"]) for b in aggregate(query, frm))
+def fetch_events(query, window, label):
+    total = sum(int(b["computes"]["c0"]) for b in aggregate(query, window))
     # Some bridge failure events embed the whole Lambda event; pages above ~5 truncate mid-stream.
     events, cursor = [], None
     while True:
-        body = {"filter": {"query": query, "from": frm, "to": "now"}, "page": {"limit": 5}, "sort": "timestamp"}
+        body = {"filter": {"query": query, "from": window[0], "to": window[1]}, "page": {"limit": 5}, "sort": "timestamp"}
         if cursor is not None:
             body["page"]["cursor"] = cursor
         page = post("/api/v2/logs/events/search", body)
@@ -241,26 +245,57 @@ def print_failure_class(events, sessions, triggers):
             print(f"      candidates: {candidates(service, service_events, sessions)}")
 
 
+def local_day_bounds(day):
+    local_tz = datetime.datetime.now().astimezone().tzinfo
+    start = datetime.datetime.combine(datetime.date.fromisoformat(day), datetime.time(), local_tz)
+    to_naive_utc = lambda value: value.astimezone(datetime.timezone.utc).replace(tzinfo=None)
+    return to_naive_utc(start), to_naive_utc(start + datetime.timedelta(days=1))
+
+
+def sessions_on(rows, day):
+    start, end = local_day_bounds(day)
+    return [r for r in rows if start <= r["start"] < end]
+
+
+def iso(value):
+    return value.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def resolve_window(args, sessions):
+    if args.frm is not None:
+        return (args.frm, "now"), sessions, "1d"
+    if sessions is None:
+        sys.exit("Pass --sessions <dump> (window = today's sessions) or --from <range>")
+    todays = sessions_on(sessions, args.day)
+    if not todays:
+        sys.exit(f"No plain:live session starts on {args.day} in the dump")
+    _, day_end = local_day_bounds(args.day)
+    end = min(day_end, datetime.datetime.utcnow())
+    return (iso(todays[0]["start"]), iso(end)), todays, "1h"
+
+
 def report(args):
     sessions = parse_sessions(args.sessions) if args.sessions else None
     triggers = read_blueprints(args.repo) if args.repo else {}
-    if sessions is not None:
-        print_sessions(sessions)
+    window, shown, interval = resolve_window(args, sessions)
+    progress(f"window {window[0]} to {window[1]}")
+    if shown is not None:
+        print_sessions(shown)
         print()
 
     base = f"env:{args.env}"
     progress("invokes...")
-    invokes = daily_counts(f'{base} "plain:live publishing invoke"', args.frm)
+    invokes = invoke_counts(f'{base} "plain:live publishing invoke"', window, interval)
     busy = {s: v for s, v in invokes.items() if sum(v.values()) > QUIET_MAX_INVOKES}
     quiet = sorted(s for s in invokes if s not in busy)
-    print(f"## Invokes forwarded ({args.frm}): {sum(sum(v.values()) for v in invokes.values())} across {len(invokes)} services")
+    print(f"## Invokes forwarded ({window[0]} to {window[1]}, per {interval}): {sum(sum(v.values()) for v in invokes.values())} across {len(invokes)} services")
     for service, series in sorted(busy.items(), key=lambda kv: -sum(kv[1].values())):
         print(f"  {service}: {sum(series.values())} {series}")
     print(f"  {len(quiet)} services with <= {QUIET_MAX_INVOKES} invokes (likely sweeps)")
 
     progress("fallbacks...")
     fallbacks = collections.defaultdict(list)
-    for event in fetch_events(f'{base} "plain:live falling back to the deployed handler"', args.frm, "fallbacks"):
+    for event in fetch_events(f'{base} "plain:live falling back to the deployed handler"', window, "fallbacks"):
         reason = re.search(r"err: \w+ \[Error\]: ([^.]{0,90})", event["msg"])
         fallbacks[(event["service"], reason.group(1) if reason else "?")].append(event["ts"][:16])
     print("\n## Fallbacks to the deployed handler")
@@ -268,7 +303,7 @@ def report(args):
         print(f"  {len(times)}x {service} | {reason} | {times[0]} to {times[-1]}")
 
     progress("bridge failures...")
-    failures = fetch_events(f'{base} "plain:live bridge failed"', args.frm, "failures")
+    failures = fetch_events(f'{base} "plain:live bridge failed"', window, "failures")
     windows = sweep_windows(failures)
     in_sweep = lambda e: any(start <= parse_ts(e["ts"]) <= end for start, end in windows)
     sweeps = [e for e in failures if in_sweep(e)]
@@ -296,14 +331,18 @@ def main():
     sub = parser.add_subparsers(dest="command", required=True)
     parse_sessions_cmd = sub.add_parser("sessions")
     parse_sessions_cmd.add_argument("dump")
+    parse_sessions_cmd.add_argument("--day", default=datetime.date.today().isoformat())
+    parse_sessions_cmd.add_argument("--all", action="store_true")
     parse_report = sub.add_parser("report")
-    parse_report.add_argument("--from", dest="frm", default="now-7d")
+    parse_report.add_argument("--day", default=datetime.date.today().isoformat())
+    parse_report.add_argument("--from", dest="frm")
     parse_report.add_argument("--env", default="dev-uk")
     parse_report.add_argument("--sessions")
     parse_report.add_argument("--repo")
     args = parser.parse_args()
     if args.command == "sessions":
-        print_sessions(parse_sessions(args.dump))
+        rows = parse_sessions(args.dump)
+        print_sessions(rows if args.all else sessions_on(rows, args.day))
         return
     if "DD_API_KEY" not in os.environ or "DD_APP_KEY" not in os.environ:
         sys.exit("DD_API_KEY and DD_APP_KEY must be set")
