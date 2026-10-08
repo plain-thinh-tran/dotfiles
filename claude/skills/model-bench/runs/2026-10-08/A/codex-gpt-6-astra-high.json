@@ -1,0 +1,26 @@
+{
+  "findings": [
+    {
+      "severity": "refactor",
+      "title": "Reuse an SLA detail fragment within each operation",
+      "location": "services/mcp-server/operations/getThreadDetails.graphql:97; services/mcp-server/operations/getThreads.graphql:175; services/mcp-server/operations/searchThreads.graphql:115",
+      "failure": "The same six-status selection is duplicated 12 times. Future status or timestamp changes require coordinated edits across every target, allowing their response shapes to drift.",
+      "fix": "Define one operation-prefixed fragment on ServiceLevelAgreementStatusDetail in each file and spread it into the four targets. Keep fragment names unique across files.",
+      "evidence": "A read-only comparison confirmed all 12 selections are identical. services/mcp-server/operations/updateBroadcast.graphql:120–173 already uses named fragments to reuse repeated selections. tools/graphql-lint/validateMcpOperations.ts combines all operation definitions, so fragment names must remain globally unique.",
+      "confidence": "high"
+    }
+  ],
+  "checked_fine": [
+    "Deploy: Dockerfile copies the operations directory, mcp.config.yaml loads it, and McpServerStack packages that directory with ContainerImage.fromAsset. All required schema fields already exist at HEAD~1; no new deployment ordering, environment, secret, permission, resource ownership, or export dependency was introduced.",
+    "Contract: Programmatic comparison against HEAD~1 confirmed all previous selections, arguments, variable defaults, sorting and pagination remain unchanged in all three operations. New SLA variables are nullable and default to null.",
+    "Contract: All six selected SLA variants and their timestamps match schema.ts and resolvers.ts. Transport routes, headers, authentication and network policy are unchanged.",
+    "Data: These changes only extend queries; no writes, migrations, deletion policies or retention changes.",
+    "Silent regression: threadsFilter.ts defaults omitted updatedAt to null; threadDbFilterUtils.ts:943 explicitly treats the resulting all-null SLA filter as a no-op. Existing unfiltered calls retain their results.",
+    "Silent regression: The summary uses the existing batched tracker loader without an additional permission requirement. Threads with neither a tier nor an SLA policy return four null targets without loading trackers. Historical filter matching is explicitly documented.",
+    "Operability: Operation files remain part of the deployed container asset; existing logging, health checks and scaling configuration are unchanged.",
+    "Rollback: HEAD~1 already supports the queried schema and resolver behavior. Rolling back removes the new MCP fields and filters but requires no data repair or infrastructure reversal.",
+    "Blast radius: Only three MCP operation files changed; shared schemas, helpers, constants and other consumers are unchanged.",
+    "Dead code: Repository-wide git grep for operation-directory consumers and new variable names, plus selection tracing, found all additions reachable through the configured operation loader; both new variables are consumed.",
+    "Validation scope: Static review and read-only parity checks completed. GraphQL validation and local integration tests were not run because node_modules is absent; no dependencies were installed and no network was used."
+  ]
+}

@@ -1,0 +1,69 @@
+{
+  "findings": [
+    {
+      "severity": "breaking",
+      "title": "Batch tenant lookup uses the wrong record set \u2014 `recordsWithTenantStubs` instead of `inRecords`",
+      "location": "packages/importers/src/handlers/importCustomers.ts:510-512",
+      "failure": "`importCustomers` calls `getTenantsByExternalId(ctx, recordsWithTenantStubs.flatMap((r) => r.tenantExternalIds ?? []))`. But `recordsWithTenantStubs` is defined at line 487 as `inRecords.filter((r) => r.tenantExternalIds === undefined || r.tenantExternalIds.length === 0)` \u2014 i.e. records that do NOT have `tenantExternalIds`. For every record in that set, `r.tenantExternalIds ?? []` is `[]`, so `getTenantsByExternalId` is always called with an empty array. `chunk(uniq([]), 500)` yields no chunks, so `getTenantsFromIdentifiers` is never called and `tenantsByExternalId` is always an empty `Map`. Downstream in `importCustomer` (line 327-331), `tenantsToLink = uniq(nangoCustomer.tenantExternalIds).flatMap(...)` resolves every external id to `undefined` against the empty map, so `tenantsToLink` is always `[]`. Every Salesforce/HubSpot/Attio customer that uses `tenantExternalIds` is now imported with zero tenant links (when `shouldSkipTenantlessCustomers` is false) or silently skipped as 'tenantless' (when it is true). This inverts the entire purpose of the PR.",
+      "fix": "Pass the full record list so the batch lookup covers records that actually carry `tenantExternalIds`: `getTenantsByExternalId(ctx, inRecords.flatMap((r) => r.tenantExternalIds ?? []))`.",
+      "evidence": "Line 487 filter: `r.tenantExternalIds === undefined || r.tenantExternalIds.length === 0` excludes every record that has tenantExternalIds. Line 510-512 then maps `tenantExternalIds` over that excluded set. The existing test at importCustomers.tenants.litest.ts:107 ('tenantExternalIds links customer to existing tenant without overwriting tenant data') and the new test at line 164 both create customers with `tenants: []` + non-empty `tenantExternalIds`; with this bug `tenantsByExternalId` is empty, `tenantsToLink` is `[]`, and the membership assertions fail.",
+      "confidence": "high"
+    },
+    {
+      "severity": "regression",
+      "title": "Fast path drops `importedByJobDefinitionId` updates \u2014 the third arg to `shouldPerformCustomerUpsertUpdate` is omitted",
+      "location": "packages/aggregates/src/customers/customerAggregate.ts:660",
+      "failure": "The new no-op fast path calls `shouldPerformCustomerUpsertUpdate(existingCustomerResult.value.value, onUpdate)` without the `importedByJobDefinitionId` argument. The slow path (line 1026-1032) passes it. `shouldPerformCustomerUpsertUpdate` (shouldPerformCustomerUpsertUpdate.ts:16-22) returns `true` when `importedByJobDefinitionId` is truthy and differs from `customer.importedByJobDefinitionId`, even with an empty `onUpdate`. The CRM import path always calls `upsertCustomer` with `onUpdate: {}` (importCustomers.ts:240) and a non-null `importedByJobDefinitionId` (importCustomers.ts:413). When an existing customer was created via API/Slack (`importedByJobDefinitionId = null`) or by a different job definition, the old code updated the column and returned `UPDATED`; the new fast path returns `NOOP` and the `imported_by_job_definition_id` column is never written. The `domain.customer.customer_changed` event that the old path published is also skipped.",
+      "fix": "Pass `importedByJobDefinitionId` into the fast-path check: `!shouldPerformCustomerUpsertUpdate(existingCustomerResult.value.value, onUpdate, importedByJobDefinitionId)`. The variable is already destructured at line 635.",
+      "evidence": "shouldPerformCustomerUpsertUpdate.test.ts:106 asserts `shouldPerformCustomerUpsertUpdate(customer, {}, 'jd_new')` returns `true`; line 110-111 asserts the same when the customer already has a non-null value. The fast path at customerAggregate.ts:660 omits the third argument. importCustomers.ts:240 sets `onUpdate: {}` and line 413 forwards `importedByJobDefinitionId`, so the fast-path condition `onUpdate.email === undefined && onUpdate.companyId === undefined` is always true for CRM imports.",
+      "confidence": "high"
+    },
+    {
+      "severity": "regression",
+      "title": "`getTenantsByExternalId` swallows chunk lookup errors and continues, dropping tenant links on transient DB failures",
+      "location": "packages/importers/src/handlers/importCustomers.ts:276-278",
+      "failure": "The new `getTenantsByExternalId` logs `warn` and `continue`s on a chunk lookup error, treating the failed chunk's tenants as absent. The old per-customer path (diff line 188-194) called `return scope.fail(ctx, lookupResult.error)` on any lookup error, failing the single customer import for retry. A transient Postgres error during the batch lookup now silently produces incomplete data: customers whose tenants were in the failed chunk are either imported without tenant memberships (when `shouldSkipTenantlessCustomers` is false) or skipped as tenantless (when it is true). The batch lookup is also called once for the whole batch before the per-customer loop, so one chunk failure affects every customer referencing those external ids, widening the blast radius versus the old per-customer lookup. This also violates AGENTS.md: 'NEVER silently ignore errors \u2014 Logging and continuing is not enough \u2014 return/throw to the caller.'",
+      "fix": "Return `Result.err(lookupResult.error)` from `getTenantsByExternalId` on chunk failure instead of `continue`, so the caller fails the batch and the sync can retry.",
+      "evidence": "Line 276-278: `if (lookupResult.isErr) { ctx.log.warn({ err: lookupResult.error }, 'Failed to look up tenant chunk by external id'); continue; }`. The old code at diff line 192-194 returned `scope.fail(ctx, lookupResult.error)`. AGENTS.md 'Absolute Requirements' states logging and continuing is not enough.",
+      "confidence": "high"
+    },
+    {
+      "severity": "dead-code",
+      "title": "`if (tenantsByExternalIdResult.isErr)` check is dead \u2014 `getTenantsByExternalId` never returns an error",
+      "location": "packages/importers/src/handlers/importCustomers.ts:513-515",
+      "failure": "The caller checks `if (tenantsByExternalIdResult.isErr) { return Result.err(tenantsByExternalIdResult.error); }`, but `getTenantsByExternalId` (line 270-285) always returns `Result.ok(tenantsByExternalId)` \u2014 every error is swallowed by the `continue` inside the loop. The `isErr` branch can never execute.",
+      "fix": "Make `getTenantsByExternalId` propagate errors (fixing the regression above), which makes this check live; or remove the dead check if swallowing is intentional (not recommended).",
+      "evidence": "Line 284: `return Result.ok(tenantsByExternalId)` is the only return statement; there is no `Result.err` path in the function body.",
+      "confidence": "high"
+    },
+    {
+      "severity": "regression",
+      "title": "Single-customer callers lose the per-customer tenant lookup the PR description promises",
+      "location": "packages/importers/src/handlers/importCustomers.ts:327",
+      "failure": "The PR description states 'Single-record import still falls back to per-customer lookup when no map is supplied.' The code does the opposite: `const tenantsByExternalId = args.tenantsByExternalId ?? new Map<string, Tenant>()` defaults to an empty map, and `tenantsToLink` is built solely from that map. When no map is supplied, `tenantsToLink` is always `[]` for any record with `tenantExternalIds`. Callers `importThreads.ts:140`, `importThreadMessage.ts:150`, and `importAllCustomersAndUsersInRecords.ts:59` all call `importCustomer` without `tenantsByExternalId`. No current caller passes a record with `tenantExternalIds` through these paths (only the CRM customer adapters set it, and they go through `importCustomers`), so there is no live data loss today \u2014 but the promised fallback is absent and any future adapter that sets `tenantExternalIds` on a thread/message customer will silently lose tenant links.",
+      "fix": "Either restore a per-customer `getTenantsFromIdentifiers` fallback when `args.tenantsByExternalId` is undefined, or correct the PR description and document that `tenantsByExternalId` is now required for tenant linking.",
+      "evidence": "Line 327: `args.tenantsByExternalId ?? new Map<string, Tenant>()` \u2014 no lookup call. importThreads.ts:140 `importCustomer(ctx, { record: recordCustomer })`, importThreadMessage.ts:150 `importCustomer(ctx, { record: author })`, importAllCustomersAndUsersInRecords.ts:59 `importCustomer(ctx, { record: c })` \u2014 none pass `tenantsByExternalId`. PR summary.md line 18: 'Single-customer callers keep the per-customer lookup.'",
+      "confidence": "high"
+    },
+    {
+      "severity": "refactor",
+      "title": "Stale comment 'Look up existing tenants by external ID' over a map read",
+      "location": "packages/importers/src/handlers/importCustomers.ts:326",
+      "failure": "The comment at line 326 says 'Look up existing tenants by external ID without upserting them', but the new code at line 327-331 reads from a pre-built `Map` and performs no lookup. A reader will look for a DB call that no longer exists here.",
+      "fix": "Replace with a comment describing the map read, or delete it \u2014 the code is self-explanatory.",
+      "evidence": "Line 326 comment precedes line 327-331 which only does `args.tenantsByExternalId ?? new Map()` and `.get(externalId)`.",
+      "confidence": "high"
+    }
+  ],
+  "checked_fine": [
+    "Fast path read uses `selectForUpdate: false`, matching the slow path's intentional no-lock choice (customerAggregate.ts:649 vs 671); no new deadlock risk introduced.",
+    "Fast path only short-circuits when `onUpdate.email === undefined && onUpdate.companyId === undefined`; when email or companyId is set, the full transactional path with company resolution runs unchanged, so the `returnTenantsInsteadOfCompanies` deprecation guard and domain lookup-by-email logic are preserved.",
+    "`shouldPerformCustomerUpsertUpdate` `overriddenFields.remove` still triggers an update (returns true) and falls through to the slow path; `overriddenFields.add` rides along exactly as in the slow path, so override semantics are consistent between paths.",
+    "`uniq(nangoCustomer.tenantExternalIds)` in the new `tenantsToLink` builder does not change behaviour vs the old path, because `getTenantsFromIdentifiers` already dedupes external ids internally (tenantAggregate.ts:516) and external ids are unique per tenant.",
+    "`importCustomerTenantMemberships` treats `tenantsToLink` as a set (filters by `!currentTenantIds.includes`), so the order change from DB-returned to map-iteration order is harmless.",
+    "`countTransactionsOpened` helper in customerAggregate.litest.ts filters `callCtx.transactionId === undefined`, correctly counting only top-level (non-nested) transactions, so the zero-transaction NOOP assertion and one-transaction UPDATED assertion are meaningful.",
+    "No migrations, schema, infra, env var, secret, or permission changes in the diff \u2014 no deploy-ordering, state-import, or rollback one-way-door concerns.",
+    "No GraphQL schema, event schema, webhook payload, or public API surface changes \u2014 no contract breakage from schema without `.default()`.",
+    "Rollback is safe: all changes are code-only and revertible; no data migration or irreversible operation is introduced."
+  ]
+}

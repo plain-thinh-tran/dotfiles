@@ -1,0 +1,38 @@
+{
+  "findings": [
+    {
+      "severity": "breaking",
+      "title": "importCustomer silently skips tenant external ID lookup when tenantsByExternalId not provided",
+      "location": "packages/importers/src/handlers/importCustomers.ts:190",
+      "failure": "Callers like importThreadMessage.ts:150, importThreads.ts, and importAllCustomersAndUsersInRecords.ts invoke importCustomer without providing a tenantsByExternalId map. Old code always looked up tenant external IDs per-customer; new code uses the provided map or empty map, silently skipping all tenant links when no map is supplied.",
+      "fix": "Add fallback: when args.tenantsByExternalId is undefined and nangoCustomer.tenantExternalIds exists, perform the original per-customer lookup via tenantAggregate.getTenantsFromIdentifiers. Or update callers to provide the map via a new batch lookup helper.",
+      "evidence": "Old code (lines 186-198 pre-change): `const lookupResult = await tenantAggregate.getTenantsFromIdentifiers(...)` followed by error check. New code (line 190): `const tenantsByExternalId = args.tenantsByExternalId ?? new Map<string, Tenant>()`. Grep shows importCustomer called from importThreadMessage.ts:150, importThreads.ts, importAllCustomersAndUsersInRecords.ts without tenantsByExternalId argument.",
+      "confidence": "high"
+    },
+    {
+      "severity": "regression",
+      "title": "getTenantsByExternalId silently skips failed chunk lookups instead of propagating errors",
+      "location": "packages/importers/src/handlers/importCustomers.ts:164-165",
+      "failure": "When tenantAggregate.getTenantsFromIdentifiers fails for a chunk, the function logs a warning but continues (line 165: `continue;`). This causes missing tenants from that chunk to be treated as 'not found', silently degrading the import. The returned map is incomplete, and callers cannot distinguish partial failure from success.",
+      "fix": "Either: (1) Return an error from getTenantsByExternalId if any chunk lookup fails, allowing importCustomers to fail fast; or (2) Return a Result<{ map: Map, failedChunks: string[] }, Error> so callers can detect partial failure and log/alert appropriately.",
+      "evidence": "Line 164-165: `if (lookupResult.isErr) { ctx.log.warn(...); continue; }`. Function always returns Result.ok even with failed chunks (line 171). Contrast with old importCustomer code that returned scope.fail on lookup error (line 195 in old code).",
+      "confidence": "high"
+    },
+    {
+      "severity": "worth-knowing",
+      "title": "upsertCustomer NOOP fast path races on read without lock; returned customer may be stale",
+      "location": "packages/aggregates/src/customers/customerAggregate.ts:645",
+      "failure": "Fast-path NOOP case (lines 642-662) reads existing customer without selectForUpdate lock. Between the read (line 643) and NOOP return (line 660), another thread can update the customer. Caller receives stale customer object. Risk is low because: (1) NOOP is only for no-op updates, (2) email/company updates take the transactional path with locking, (3) DB state is correct even if returned object is stale. Documented in PR as acceptable.",
+      "fix": "No fix needed—this is an accepted design trade-off per the PR description. Documented in code comment lines 106-108.",
+      "evidence": "Line 645: `selectForUpdate: false`. Old transactional path also doesn't use locks (line 667 also false). Comment line 106-108 acknowledges race window but accepts it for performance.",
+      "confidence": "high"
+    }
+  ],
+  "checked_fine": [
+    "Test coverage for NOOP upsert (customerAggregate.litest.ts lines 50-71 validates zero transactions)",
+    "Test coverage for batch tenant lookup (importCustomers.tenants.litest.ts lines 244-299 validates one lookup call)",
+    "Transaction boundaries: upsertCustomer falls through to transactional path for email/company updates (line 142)",
+    "Dedupe of external IDs in batch: getTenantsByExternalId uses uniq() at line 159",
+    "Chunk size config: TENANT_LOOKUP_CHUNK_SIZE = 500 is reasonable for parameter count"
+  ]
+}

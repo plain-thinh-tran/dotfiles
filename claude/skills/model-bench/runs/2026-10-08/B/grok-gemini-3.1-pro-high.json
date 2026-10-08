@@ -1,0 +1,46 @@
+{
+  "findings": [
+    {
+      "severity": "regression",
+      "title": "importCustomer direct callers lose tenant links",
+      "location": "packages/importers/src/handlers/importCustomers.ts",
+      "failure": "importCustomer no longer performs internal tenant lookups. Callers like importThreads.ts, importThreadMessage.ts, and importAllCustomersAndUsersInRecords.ts do not pass tenantsByExternalId, so the lookup defaults to an empty Map, silently failing to link any tenants for the imported customers.",
+      "fix": "If args.tenantsByExternalId is not provided, fallback to the old behaviour of looking up nangoCustomer.tenantExternalIds using tenantAggregate.getTenantsFromIdentifiers.",
+      "evidence": "The PR replaces the internal tenantAggregate.getTenantsFromIdentifiers call inside importCustomer with `args.tenantsByExternalId ?? new Map<string, Tenant>()`, but searches show other callers still call importCustomer without passing this argument.",
+      "confidence": "high"
+    },
+    {
+      "severity": "regression",
+      "title": "importCustomers batch path passes wrong array for tenantExternalIds, causing empty map",
+      "location": "packages/importers/src/handlers/importCustomers.ts",
+      "failure": "getTenantsByExternalId is called on recordsWithTenantStubs, which is explicitly filtered to contain only records where tenantExternalIds is undefined or empty. As a result, the external ID list is always empty, the returned map is always empty, and no tenants are linked for customers using tenantExternalIds via the batch import path.",
+      "fix": "Map `inRecords.flatMap((r) => r.tenantExternalIds ?? [])` instead of `recordsWithTenantStubs.flatMap(...)` when fetching tenantsByExternalIdResult.",
+      "evidence": "`recordsWithTenantStubs.flatMap((r) => r.tenantExternalIds ?? [])` evaluates to an empty array because recordsWithTenantStubs filters for `r.tenantExternalIds === undefined || r.tenantExternalIds.length === 0`.",
+      "confidence": "high"
+    },
+    {
+      "severity": "regression",
+      "title": "getTenantsByExternalId swallows tenant lookup errors, causing silent data loss",
+      "location": "packages/importers/src/handlers/importCustomers.ts",
+      "failure": "When fetching tenants by external IDs in chunks, if a database error occurs (lookupResult.isErr), the code logs a warning and continues, skipping the chunk. Callers like importCustomers then proceed to import the customers without their tenants, succeeding the sync job but silently dropping the relationships. Previously, the error failed the specific customer's import.",
+      "fix": "Return the error from getTenantsByExternalId immediately instead of continuing, or fail the specific customers that depended on that chunk.",
+      "evidence": "getTenantsByExternalId has `if (lookupResult.isErr) { ctx.log.warn(...); continue; }`, converting domain errors into missing map entries which are then ignored by importCustomer.",
+      "confidence": "high"
+    },
+    {
+      "severity": "regression",
+      "title": "upsertCustomer NOOP fast path ignores importedByJobDefinitionId changes",
+      "location": "packages/aggregates/src/customers/customerAggregate.ts",
+      "failure": "The new NOOP fast path in upsertCustomer calls shouldPerformCustomerUpsertUpdate but forgets to pass importedByJobDefinitionId. If a customer is upserted with no field changes but a new importedByJobDefinitionId, the upsert will incorrectly return NOOP and fail to update the job definition ID.",
+      "fix": "Pass importedByJobDefinitionId as the third argument to shouldPerformCustomerUpsertUpdate(existingCustomerResult.value.value, onUpdate, importedByJobDefinitionId).",
+      "evidence": "The fast path added in lines 659-662 of packages/aggregates/src/customers/customerAggregate.ts misses the third argument that the transaction path passes to the same helper on line 1032.",
+      "confidence": "high"
+    }
+  ],
+  "checked_fine": [
+    "Tests in packages/aggregates-tests/customers/customerAggregate.litest.ts correctly assert the NOOP fast path.",
+    "No hardcoded constants or dependencies modified that would break other stacks.",
+    "DB schema is untouched and deploy pipeline won't break.",
+    "No validation regressions or removed outputs found in customerAggregate.ts."
+  ]
+}

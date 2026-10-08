@@ -1,0 +1,44 @@
+{
+  "findings": [
+    {
+      "severity": "breaking",
+      "title": "Default getThreads calls generate invalid SQL",
+      "location": "services/mcp-server/operations/getThreads.graphql:100-103",
+      "failure": "Every MCP getThreads call that omits both new SLA variables sends a non-null serviceLevelAgreements object containing two null fields. The resulting thread query contains an empty parenthesized predicate (`AND ()`) and fails instead of returning the previously unfiltered thread list.",
+      "fix": "Either pass one nullable `ServiceLevelAgreementFilter` variable so the whole field is null when unused, or make the DB filter's all-null branch return `sql.fragment`1 = 1``. Add a regression test for `{ types: null, statuses: null, updatedAt: null }`.",
+      "evidence": "The operation always constructs `serviceLevelAgreements: { statuses: $slaStatuses, types: $slaTypes }`. `ThreadsFilter` defaults `updatedAt` to null, and `determineThreadFilters.ts:179-185` preserves the object. `threadDbFilterUtils.ts:943-947` returns an empty SQL fragment for that shape. `packages/db/src/filtering.ts:110-124` retains the fragment object because lodash `compact` only removes falsy values, then `threadDbFilterUtils.ts:1275-1279` wraps it in parentheses. `threadDb.ts:1248-1253` inserts that predicate into the production query. This disproves the PR description's no-op claim.",
+      "confidence": "high"
+    },
+    {
+      "severity": "worth-knowing",
+      "title": "The documented __typename values are incorrect",
+      "location": "services/mcp-server/operations/getThreadDetails.graphql:5-6",
+      "failure": "MCP consumers are told to expect `Pending`, `ImminentBreach`, and similar values, but production responses contain names such as `ServiceLevelAgreementStatusDetailPending`. Agents or integrations following the new tool description can misclassify or fail to parse SLA states.",
+      "fix": "Document the exact GraphQL type names, or expose/transform them into an explicit status enum before returning the tool result.",
+      "evidence": "`packages/core-graphql/src/resolvers.ts:11918-11933` resolves the union to the full `ServiceLevelAgreementStatusDetail*` names. `lambdas/agent-sandbox-api/src/proxy/responseTransforms.test.ts:123-144` confirms those raw values and shows that a separate transform is required to obtain `PENDING`/`ACHIEVED`. GraphQL Specification \u00a74.1 defines `__typename` as the object type's name; the MCP server directly executes these operations without that agent-sandbox transform.",
+      "confidence": "high"
+    },
+    {
+      "severity": "refactor",
+      "title": "The SLA union selection is duplicated twelve times",
+      "location": "services/mcp-server/operations/getThreads.graphql:174-349",
+      "failure": "The same status-specific selection is repeated for four targets in each of three operations. A future status or field update can silently leave some MCP tools or targets with incomplete output.",
+      "fix": "Define an operation-local named fragment on `ServiceLevelAgreementStatusDetail` and spread it into all four targets. Apply the same fragment pattern to the other two operations; existing MCP broadcast operations demonstrate operation-local fragments.",
+      "evidence": "Repo-wide search for `ServiceLevelAgreementStatusDetailPending` in `services/mcp-server/operations` finds only these three changed files, each repeating the six union members four times. Repo-wide search for `^fragment ` shows the established named-fragment pattern in operations such as `getBroadcastDetails.graphql` and `updateBroadcast.graphql`.",
+      "confidence": "high"
+    }
+  ],
+  "checked_fine": [
+    "Deploy: only MCP operation assets changed; the Docker build copies the operations directory and `ecs.ContainerImage.fromAsset` redeploys it. The referenced schema fields already exist in both HEAD and HEAD~1, so there is no schema/deployment ordering, export, state, environment, secret, or permission change.",
+    "Contract: existing routes, methods, authentication, pagination variables, filters, and response selections are unchanged. The added enum variable types and all six union member selections match the core GraphQL schema.",
+    "Data: no migrations, resource deletions, retention changes, or persistent-data writes were introduced.",
+    "Silent regression: apart from the default-filter failure reported above, status-specific timestamps map correctly: pending/imminent use breach and pause data, breaching uses breachedAt, achieved uses completedAt as achievedAt, breached uses breachedAt/completedAt, and cancelled uses cancelledAt.",
+    "Operability: the MCP container asset hash includes operation-file edits, so future operation changes trigger a new task definition and ECS deployment.",
+    "Rollback: reverting to HEAD~1 restores the previous operation documents without requiring data or infrastructure rollback; there is no one-way change.",
+    "Blast radius: no shared constants, schemas, resolvers, aggregates, or infrastructure were modified.",
+    "Dead code: all added selections and variables are reachable because `mcp.config.yaml` loads `/data/operations/`, the Dockerfile copies that directory, and the getThreads operation references both new variables.",
+    "Performance: SLA summaries use the existing DataLoader and batch all qualifying thread IDs into one tracker query; threads with neither a tier nor an SLA policy return all-null without invoking that loader.",
+    "Filter semantics with a non-null status or type match the documentation: the DB uses an EXISTS over all tracker rows, while the summary resolver selects the newest tracker per thread and SLA type.",
+    "HEAD~1 parity: comparison of all three old operations shows no removed fields or changed existing arguments; their changes are additive aside from the reported default getThreads regression."
+  ]
+}

@@ -1,0 +1,56 @@
+diff --git a/packages/aggregates/src/customers/customerAggregate.ts b/packages/aggregates/src/customers/customerAggregate.ts
+index fe9fb9b..0e86209 100644
+--- a/packages/aggregates/src/customers/customerAggregate.ts
++++ b/packages/aggregates/src/customers/customerAggregate.ts
+@@ -657,11 +657,7 @@ async function upsertCustomer(
+     }
+     if (
+       existingCustomerResult.value.isJust &&
+-      !shouldPerformCustomerUpsertUpdate(
+-        existingCustomerResult.value.value,
+-        onUpdate,
+-        importedByJobDefinitionId
+-      )
++      !shouldPerformCustomerUpsertUpdate(existingCustomerResult.value.value, onUpdate)
+     ) {
+       ctx.log.debug('No updates for upsert found for existing customer, returning NOOP result');
+       return Result.ok({ customer: existingCustomerResult.value.value, result: 'NOOP' });
+diff --git a/packages/importers/src/handlers/importCustomers.ts b/packages/importers/src/handlers/importCustomers.ts
+index 23263fe..3839bc3 100644
+--- a/packages/importers/src/handlers/importCustomers.ts
++++ b/packages/importers/src/handlers/importCustomers.ts
+@@ -280,7 +280,8 @@ async function getTenantsByExternalId(
+       identifiers: externalIdsChunk.map((externalId) => ({ externalId })),
+     });
+     if (lookupResult.isErr) {
+-      return Result.err(lookupResult.error);
++      ctx.log.warn({ err: lookupResult.error }, 'Failed to look up tenant chunk by external id');
++      continue;
+     }
+     for (const tenant of lookupResult.value.tenants) {
+       tenantsByExternalId.set(tenant.externalId, tenant);
+@@ -323,14 +324,7 @@ export async function importCustomer(
+ 
+   if (nangoCustomer.tenantExternalIds !== undefined && nangoCustomer.tenantExternalIds.length > 0) {
+     // Look up existing tenants by external ID without upserting them
+-    const tenantsByExternalIdResult =
+-      args.tenantsByExternalId !== undefined
+-        ? Result.ok<Map<string, Tenant>, DomainError>(args.tenantsByExternalId)
+-        : await getTenantsByExternalId(ctx, nangoCustomer.tenantExternalIds);
+-    if (tenantsByExternalIdResult.isErr) {
+-      return scope.fail(ctx, tenantsByExternalIdResult.error);
+-    }
+-    const tenantsByExternalId = tenantsByExternalIdResult.value;
++    const tenantsByExternalId = args.tenantsByExternalId ?? new Map<string, Tenant>();
+     tenantsToLink = uniq(nangoCustomer.tenantExternalIds).flatMap((externalId) => {
+       const tenant = tenantsByExternalId.get(externalId);
+       return tenant === undefined ? [] : [tenant];
+@@ -515,7 +509,7 @@ export async function importCustomers(
+ 
+   const tenantsByExternalIdResult = await getTenantsByExternalId(
+     ctx,
+-    inRecords.flatMap((r) => r.tenantExternalIds ?? [])
++    recordsWithTenantStubs.flatMap((r) => r.tenantExternalIds ?? [])
+   );
+   if (tenantsByExternalIdResult.isErr) {
+     return Result.err(tenantsByExternalIdResult.error);

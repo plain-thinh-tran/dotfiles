@@ -1,0 +1,74 @@
+commit 5aa05569341be533edf29c4eab704029a7436de9
+Author: Jesus <jesus@plain.com>
+Date:   Wed Oct 7 18:07:15 2026 +0200
+
+    PE-1296: Fix invalid thread filter SQL when SLA filter is empty (#11414)
+    
+    <!-- CURSOR_AGENT_PR_BODY_BEGIN -->
+    Prod `core-graphql-api` has been erroring on `getThreads` with Postgres
+    `syntax_error` (`syntax error at or near "AND"`) — Datadog Error
+    Tracking issue
+    [99a58b60-c265-11f1-bfbb-da7ad0900005](https://app.datadoghq.eu/error-tracking?issueId=99a58b60-c265-11f1-bfbb-da7ad0900005).
+    
+    The MCP `getThreads` operation always sends a `serviceLevelAgreements: {
+    statuses, types }` block even when both variables are null.
+    `buildFilters` still treated that input as active and the SLA filter
+    builder returned an empty SQL fragment. Joining real predicates with
+    that fragment produced invalid SQL like `"assigned_to" IS NOT NULL AND
+    AND ("created_at" >= …)`.
+    
+    When no SLA (or agent status) criteria are set, those builders now
+    return `ignoreFilter()` (`1 = 1`), matching `rangeFilter` and other
+    no-op filters.
+    
+    Related: Linear PE-1296.
+    <!-- CURSOR_AGENT_PR_BODY_END -->
+    
+    <div><a
+    href="https://cursor.com/agents/bc-3556c3dc-6833-49da-99cf-cc6b899c2ffb?cursor_ref=pr_footer&cursor_cta=open_in_web"><picture><source
+    media="(prefers-color-scheme: dark)"
+    srcset="https://cursor.com/assets/images/open-in-web-dark.png"><source
+    media="(prefers-color-scheme: light)"
+    srcset="https://cursor.com/assets/images/open-in-web-light.png"><img
+    alt="Open in Web" width="114" height="28"
+    src="https://cursor.com/assets/images/open-in-web-dark.png"></picture></a>&nbsp;<a
+    href="https://cursor.com/background-agent?bcId=bc-3556c3dc-6833-49da-99cf-cc6b899c2ffb&cursor_ref=pr_footer&cursor_cta=open_in_cursor"><picture><source
+    media="(prefers-color-scheme: dark)"
+    srcset="https://cursor.com/assets/images/open-in-cursor-dark.png"><source
+    media="(prefers-color-scheme: light)"
+    srcset="https://cursor.com/assets/images/open-in-cursor-light.png"><img
+    alt="Open in Cursor" width="131" height="28"
+    src="https://cursor.com/assets/images/open-in-cursor-dark.png"></picture></a>&nbsp;</div>
+    
+    Co-authored-by: Cursor Agent <cursoragent@cursor.com>
+    Co-authored-by: Jesus <jesushernandez@users.noreply.github.com>
+
+diff --git a/packages/aggregates/src/thread/threadDbFilterUtils.test.ts b/packages/aggregates/src/thread/threadDbFilterUtils.test.ts
+index ad2acbb85e..1bfeb4064e 100644
+--- a/packages/aggregates/src/thread/threadDbFilterUtils.test.ts
++++ b/packages/aggregates/src/thread/threadDbFilterUtils.test.ts
+@@ -952,6 +952,24 @@ describe('threadDbFilterUtils', () => {
+         expect(result.filters.sql).toContain('service_level_agreement_trackers');
+         expect(result.filters.sql).toContain('AND');
+       });
++
++      test('does not emit invalid SQL when SLA filter fields are all null', () => {
++        const testDate = DateTime.fromISO('2024-01-15T10:00:00.000Z');
++        const filters = createTestFilters({
++          isAssigned: true,
++          createdAt: { after: testDate, before: null },
++          serviceLevelAgreements: {
++            types: null,
++            statuses: null,
++            updatedAt: null,
++          },
++        });
++        const result = createFilters(Maybe.nothing(), filters);
++
++        expect(result.filters.sql).not.toMatch(/AND\s+AND/);
++        expect(result.filters.sql).toContain('"t"."assigned_to" IS NOT NULL');
++        expect(result.filters.sql).toContain('"t"."created_at"');
++      });
+     });
+ 
+     describe('agentStatus filter', () => {

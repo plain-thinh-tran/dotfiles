@@ -4,7 +4,7 @@
 #   design     needs brief.md               -> design.sol.md, design.grok.md
 #   challenge  needs brief.md, design.md    -> challenge.sol.md, challenge.grok.md
 #   review     needs design.md, diff.patch  -> review.sol.md, review.grok.md
-# Env: REPO_DIR (default: git toplevel of meeting dir), CODEX_MODEL (default gpt-6-sol), CODEX_EFFORT (default high), CURSOR_MODEL (default grok-4.7-high)
+# Env: REPO_DIR (default: git toplevel of meeting dir), CODEX_MODEL (default gpt-6-sol), CODEX_EFFORT (default high), CURSOR_MODEL (default cursor-grok-4.6-medium)
 set -uo pipefail
 export PATH="$HOME/.local/bin:$PATH"
 
@@ -12,7 +12,7 @@ STAGE="${1:?usage: council.sh design|challenge|review <meeting-dir>}"
 DIR="$(cd "${2:?meeting dir required}" && pwd)"
 CODEX_MODEL="${CODEX_MODEL:-gpt-6-sol}"
 CODEX_EFFORT="${CODEX_EFFORT:-high}"
-CURSOR_MODEL="${CURSOR_MODEL:-grok-4.7-high}"
+CURSOR_MODEL="${CURSOR_MODEL:-cursor-grok-4.6-medium}"
 REPO_DIR="${REPO_DIR:-$(git -C "$DIR" rev-parse --show-toplevel 2>/dev/null || pwd)}"
 
 need() { [ -f "$DIR/$1" ] || { echo "$DIR/$1 missing" >&2; exit 1; }; }

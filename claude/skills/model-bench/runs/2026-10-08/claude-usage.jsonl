@@ -1,0 +1,16 @@
+{"tag":"claude-sonnet","case":"B","tokens":73129,"tools":15,"seconds":58}
+{"tag":"claude-haiku","case":"A","tokens":92655,"tools":32,"seconds":100}
+{"tag":"scout-sonnet","tokens":62847,"tools":13,"seconds":48}
+{"tag":"claude-haiku","case":"B","tokens":82747,"tools":21,"seconds":130}
+{"tag":"scout-haiku","tokens":115559,"tools":47,"seconds":148}
+{"tag":"claude-opus","case":"B","tokens":96727,"tools":28,"seconds":229}
+{"tag":"claude-sonnet","case":"A","tokens":136401,"tools":57,"seconds":262}
+{"tag":"claude-fable","case":"B","tokens":102664,"tools":17,"seconds":259}
+{"tag":"claude-fable","case":"A","tokens":97421,"tools":18,"seconds":286}
+{"tag":"claude-opus","case":"A","tokens":124256,"tools":54,"seconds":341}
+{"tag":"build-P2-sonnet","tokens":53024,"tools":6,"seconds":33}
+{"tag":"build-P2-haiku","tokens":92009,"tools":17,"seconds":74}
+{"tag":"build-P1-sonnet","tokens":49680,"tools":10,"seconds":143}
+{"tag":"build-P1-haiku","tokens":110470,"tools":42,"seconds":182}
+{"tag":"claude-sonnet-v1","case":"A","tokens":109156,"tools":42,"seconds":196}
+{"tag":"claude-opus-v1","case":"A","tokens":124668,"tools":59,"seconds":341}

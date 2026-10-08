@@ -1,0 +1,32 @@
+{
+  "findings": [
+    {
+      "severity": "worth-knowing",
+      "title": "List queries now pay SLA resolver cost and larger payloads on every thread",
+      "location": "services/mcp-server/operations/getThreads.graphql, services/mcp-server/operations/searchThreads.graphql",
+      "failure": "getThreads (first 10) and searchThreads (first 50) now resolve serviceLevelAgreementStatusSummary on every returned thread and return 4 targets of timestamps per thread, increasing core GraphQL latency (25s Lambda / 30s gateway ladder) for workspaces with SLA policies and inflating MCP token usage even when the caller does not need SLA data.",
+      "fix": "Verify p99 for getThreads/searchThreads on an SLA-heavy workspace stays within budget, or confirm the always-on selection is intended versus making it opt-in.",
+      "evidence": "New serviceLevelAgreementStatusSummary selection in both list operations; Thread.serviceLevelAgreementStatusSummary resolver calls serviceLevelAgreementStatusResolver for every thread with a tierId or serviceLevelAgreementPolicyId (packages/core-graphql/src/resolvers.ts:7761) and early-returns all-null only when both are null.",
+      "confidence": "medium"
+    },
+    {
+      "severity": "worth-knowing",
+      "title": "slaStatuses filter can match historical tracker rows the summary no longer shows",
+      "location": "services/mcp-server/operations/getThreads.graphql",
+      "failure": "An agent asking for currently-breaching threads (e.g. slaStatuses [BREACHING] or [BREACHED]) gets threads whose newest per-target status in serviceLevelAgreementStatusSummary is PENDING/Achieved, because the DB filter is EXISTS over all service_level_agreement_trackers rows including completed ones.",
+      "fix": "Keep the header warning and verify with one SLA thread carrying an old BREACHED row plus a newer PENDING tracker that the returned summary/filter pair reads as documented.",
+      "evidence": "DB filter pushes EXISTS (SELECT 1 FROM service_level_agreement_trackers slats WHERE thread_id AND type/status conditions) in packages/aggregates/src/thread/threadDbFilterUtils.ts:646-686; operation header itself documents the divergence (slaStatuses match any tracker including completed; summary is newest per target).",
+      "confidence": "high"
+    }
+  ],
+  "checked_fine": [
+    "Deploy: .graphql-only change; image rebuild picks up operations via Dockerfile COPY operations/ and entrypoint fetches live schema from core API at startup, so no export/import, migration-vs-code ordering, env var, secret, or permission failure; no CloudFormation exports touched.",
+    "Contract: new $slaStatuses/[ServiceLevelAgreementStatus!] and $slaTypes/[ServiceLevelAgreementType!] are optional null-defaulted; enum values and ServiceLevelAgreementFilter{statuses,types} match ThreadsFilter.serviceLevelAgreements in schema.ts:6564/6624; ServiceLevelAgreementStatusSummary targets and Pending/ImminentBreach/Breaching/Achieved/Breached/Cancelled detail fields plus DateTime{iso8601} match schema.ts:14072-14129/2381; no routes, methods, auth, or outputs removed.",
+    "Data: no tables, deletions, retention, DeletionPolicy, or migrations touched.",
+    "Silent regression (unfiltered parity): default-null getThreads sends serviceLevelAgreements:{statuses:null,types:null}, which the DB guard treats as no-op (types/statuses/updatedAt all null adds no EXISTS condition), identical to omitting the filter; threads with no tier and no SLA policy return all-null without a DB query.",
+    "Rollback: additive operation text only; rolling back to HEAD~1 restores prior selections/variables with no stored-state or one-way-door effects (stateless streamable_http transport).",
+    "Blast radius: edits confined to 3 MCP operation files; no shared constants, utils, resolvers, or other operations changed; repo-wide search shows no other consumer of slaStatuses/slaTypes.",
+    "Dead code: none added or orphaned; every new selection/variable is wired (summary returned to MCP clients, slaStatuses/slaTypes bound into ThreadsFilter.serviceLevelAgreements); no unreachable branches or removed-behavior comments left behind.",
+    "Design: no refactor warranted; per-file inline fragments match existing operation style (fragments in this repo are file-local) and follow the AGENTS.md MCP-operations pattern."
+  ]
+}

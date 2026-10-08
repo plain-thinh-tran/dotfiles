@@ -1,0 +1,56 @@
+{
+  "findings": [
+    {
+      "severity": "breaking",
+      "title": "Batch import looks up tenantExternalIds from the wrong records, so CRM tenant links never resolve",
+      "location": "packages/importers/src/handlers/importCustomers.ts:485-517",
+      "failure": "HubSpot, Salesforce, and Attio contacts set tenantExternalIds and empty tenants. importCustomers filters recordsWithTenantStubs to rows with no tenantExternalIds, then passes that list into getTenantsByExternalId, so the map is always empty. importCustomer treats a missing key as \u201ctenant does not exist\u201d. Tenant-centric jobs (entityTypes includes TENANTS) skip those customers; customer-only jobs import them with no memberships. nango-sync-handler production CRM sync stops linking (and often importing) contacts.",
+      "fix": "Pass every record\u2019s tenantExternalIds into getTenantsByExternalId (inRecords.flatMap(r => r.tenantExternalIds ?? []), not recordsWithTenantStubs). Do not pass an empty map as if it were a complete lookup.",
+      "evidence": "HEAD importCustomers.ts:485-487 keeps records with tenantExternalIds === undefined || length === 0; 510-512 then flatMaps those records\u2019 tenantExternalIds (always []). 327-331 reads args.tenantsByExternalId and skips unmatched ids. Comment at 298: \u201ca missing key means no such tenant exists.\u201d HEAD~1 importCustomer called tenantAggregate.getTenantsFromIdentifiers per record (diff). Adapters: packages/importers/src/adapters/hubspot/mappers/toCustomer.ts:15-32, salesforce/mappers/toCustomer.ts:9-27, attio/mappers/toCustomer.ts:24. Skip path: importCustomers.ts:333-351 when shouldSkipTenantlessCustomers and relevantTenants.length === 0. Caller: lambdas/nango-sync-handler/src/handleImportSyncMessage.ts:171-175. tenantDb.getTenantsByIdentifiers returns [] for empty id lists (tenantDb.ts:248-251), matching an empty map. Existing litest \u201ctenantExternalIds links customer to existing tenant\u201d and \u201cimports customer with tenantExternalIds when at least one exists\u201d assert the old behaviour."
+    },
+    {
+      "severity": "regression",
+      "title": "importCustomer no longer looks up tenants when no map is supplied",
+      "location": "packages/importers/src/handlers/importCustomers.ts:325-331",
+      "failure": "HEAD~1 resolved tenantExternalIds with getTenantsFromIdentifiers and failed the record on error. The new code uses args.tenantsByExternalId ?? new Map(), so a missing map is an empty map, not a live lookup. importThreads, importThreadMessage, and importAllCustomersAndUsersInRecords call importCustomer with only { record }, so those customers never get tenant memberships from tenantExternalIds.",
+      "fix": "When tenantsByExternalId is undefined, call getTenantsFromIdentifiers for that record\u2019s ids and fail the record on error (HEAD~1). Only skip the query when a complete map is passed.",
+      "evidence": "Repo search importCustomer(ctx: only importCustomers.ts:536 (passes map), importThreads.ts:140, importThreadMessage.ts:150, importAllCustomersAndUsersInRecords.ts:59 (no map). New branch: tenantsByExternalId = args.tenantsByExternalId ?? new Map(); flatMap get or []. HEAD~1 (diff) used tenantAggregate.getTenantsFromIdentifiers and scope.fail on isErr. PR text claims single-customer callers keep per-customer lookup; the code does not."
+    },
+    {
+      "severity": "regression",
+      "title": "Tenant chunk lookup failures are logged and ignored, then treated as missing tenants",
+      "location": "packages/importers/src/handlers/importCustomers.ts:282-284",
+      "failure": "getTenantsByExternalId continues on getTenantsFromIdentifiers isErr. Those ids never enter the map. Combined with \u201cmissing key means no such tenant\u201d, a transient DB/permission error skips memberships or, with shouldSkipTenantlessCustomers, skips the customer. HEAD~1 failed the record so nango-sync-handler returned err and could retry; a skip is recorded as success and will not retry.",
+      "fix": "If lookupResult.isErr, return Result.err(lookupResult.error) (do not continue). importCustomers already forwards that err at 514-516.",
+      "evidence": "importCustomers.ts:282-284: log warn and continue. AGENTS.md Critical Rules: never await a Result without checking isErr; \u201cLogging and continuing is not enough \u2014 return/throw to the caller.\u201d HEAD~1 importCustomer returned scope.fail(ctx, lookupResult.error). nango-sync-handler.ts:176-178 returns err on importCustomers failure."
+    },
+    {
+      "severity": "regression",
+      "title": "No-op upsert fast path drops importedByJobDefinitionId updates",
+      "location": "packages/aggregates/src/customers/customerAggregate.ts:645-664",
+      "failure": "CRM import parses onUpdate as {} and always takes the new fast path (email and companyId undefined). shouldPerformCustomerUpsertUpdate is called with only (customer, onUpdate), so a differing importedByJobDefinitionId does not force an update. Repeat syncs of existing customers (the hot path) never stamp customers.imported_by_job_definition_id. HEAD~1 always entered the transaction and updateCustomerUnsafe passed the job id (customerAggregate.ts:1026-1032, 1060-1062).",
+      "fix": "Call shouldPerformCustomerUpsertUpdate(existing, onUpdate, importedByJobDefinitionId) with the same third argument as updateCustomerUnsafe.",
+      "evidence": "Fast path: customerAggregate.ts:645-664, no third argument. updateCustomerUnsafe still passes importedByJobDefinitionId at 1026-1033. Helper: shouldPerformCustomerUpsertUpdate.ts:16-20 returns true when the job id differs even if onUpdate is empty; tests at shouldPerformCustomerUpsertUpdate.test.ts:105-111. parseImportCustomer sets onUpdate: {} (importCustomers.ts:240) and upsertCustomer is called with importedByJobDefinitionId (406-414). Search onUpdate: {} includes email/slack/chat/discord/help-center upserts; those rarely pass a job id, but nango-sync-handler always does (handleImportSyncMessage.ts:174)."
+    },
+    {
+      "severity": "dead-code",
+      "title": "getTenantsByExternalId cannot return Err, so importCustomers\u2019 error branch is unreachable",
+      "location": "packages/importers/src/handlers/importCustomers.ts:514-516",
+      "failure": "The isErr handler never runs. Chunk failures are swallowed inside getTenantsByExternalId, so importCustomers cannot abort the batch on lookup failure.",
+      "fix": "Return Result.err from getTenantsByExternalId on lookup failure (same fix as the chunk-continue finding) or drop the Result wrapper and return Map directly.",
+      "evidence": "Search getTenantsByExternalId: only defined and called in importCustomers.ts. The function\u2019s only return is return Result.ok(tenantsByExternalId) at line 290; no Result.err in that function. The isErr branch at 514-516 is therefore unreached."
+    }
+  ],
+  "checked_fine": [
+    "Deploy: no SST/OpenTofu/migrations/env/secrets/CF export changes; application-only.",
+    "Contract: upsertCustomer still returns CREATED/UPDATED/NOOP; GraphQL importCustomersMutation maps nested tenants only (no tenantExternalIds) and still uses preSyncedTenants.",
+    "Data: no deletes, retention cuts, or irreversible migrations.",
+    "Rollback: no schema/infra one-way door; reverting HEAD~1 restores per-record tenant lookup and transactional no-ops. Memberships and job ids not written while this head is live stay missing after rollback (consequence of the regressions, not a rollback break).",
+    "Silent lock/race: HEAD~1 upsertCustomer already used selectForUpdate: false (customerAggregate.ts:670-672); skipping the transaction on a true field no-op does not drop a lock the old path had.",
+    "Fast path correctly bypasses email/company-only updates so company resolution in updateCustomerUnsafe still runs.",
+    "Creates and real field updates still open withTransaction; litest asserts 0 tx on noop and 1 on fullName change.",
+    "Nested tenants stubs (recordsWithTenantStubs) still go through filterTenants/importTenants; uniq() on tenantExternalIds matches getTenantsFromIdentifiers\u2019 uniq of external ids.",
+    "Chunk size 500 is compatible with tenantDb.getTenantsByIdentifiers ANY() (no extra identifier cap in that query).",
+    "shouldPerformCustomerUpsertUpdate itself is unchanged; blast radius is the new upsertCustomer call site omitting its third argument."
+  ]
+}

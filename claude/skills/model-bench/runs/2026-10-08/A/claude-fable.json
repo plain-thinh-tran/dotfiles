@@ -1,0 +1,31 @@
+{
+  "findings": [
+    {
+      "severity": "refactor",
+      "title": "Same 40 line SLA detail selection pasted 12 times instead of a per file fragment",
+      "location": "services/mcp-server/operations/getThreadDetails.graphql:96",
+      "failure": "Each of the three files repeats the identical ServiceLevelAgreementStatusDetail inline fragment block four times (firstResponseTime, nextResponseTime, firstResolutionTime, totalResolutionTime), 12 copies and ~500 of the 561 added lines. Any future field change (e.g. a new status type or a renamed timestamp) has to be applied in 12 places and a missed copy silently returns a different shape per target or per tool; tool descriptions grow accordingly for every agent call.",
+      "fix": "Define one named fragment per file on the union, e.g. `fragment GetThreadDetailsSlaDetail on ServiceLevelAgreementStatusDetail { __typename ... }` and spread it in the four targets. Names must be unique across files because tools/graphql-lint/validateMcpOperations.ts:49-51 concatenates every operation file into a single document before validate(); follow the existing operation prefixed convention (`fragment GetBroadcastsActor on InternalActor` in services/mcp-server/operations/getBroadcasts.graphql:109).",
+      "evidence": "services/mcp-server/operations/getThreadDetails.graphql:96-273, getThreads.graphql:174-351, searchThreads.graphql:114-291 are byte identical modulo indentation; apollo-mcp-server already loads same file fragments (getBroadcasts.graphql:90,96,109).",
+      "confidence": "high"
+    },
+    {
+      "severity": "worth-knowing",
+      "title": "getMyAssignedThreads and getCustomerThreads still return no SLA status",
+      "location": "services/mcp-server/operations/getMyAssignedThreads.graphql:14",
+      "failure": "The PR adds serviceLevelAgreementStatusSummary to three of the five thread listing tools. An agent asked \"which of my assigned threads are breaching\" or \"this customer's threads at risk\" calls getMyAssignedThreads / getCustomerThreads, gets no SLA field, and either answers that there is no SLA data or has to re-query every thread through getThreadDetails. Tool outputs for the same Thread type now disagree depending on which tool was chosen.",
+      "fix": "Either add the same selection (ideally via the fragment above) to getMyAssignedThreads.graphql and getCustomerThreads.graphql, or state in those tool descriptions that SLA status is only available from getThreads/searchThreads/getThreadDetails.",
+      "evidence": "grep -c serviceLevelAgreementStatusSummary services/mcp-server/operations/getMyAssignedThreads.graphql services/mcp-server/operations/getCustomerThreads.graphql returns 0 for both; both select the same Thread node fields (id, ref, title, status, priority, assignedTo...) as getThreads.",
+      "confidence": "medium"
+    }
+  ],
+  "checked_fine": [
+    "Every selected field exists in the schema with the exact names and nullability used: Thread.serviceLevelAgreementStatusSummary (packages/core-graphql/src/schema.ts:13932), ServiceLevelAgreementStatusSummary four targets (:14119-14129), Pending/ImminentBreach {breachingAt, pausedAt, remainingMinutesAtPause}, Breaching {breachedAt}, Achieved {achievedAt}, Breached {breachedAt, completedAt}, Cancelled {cancelledAt} (:14072-14110); ThreadSearchResult.thread is Thread (:13253) so searchThreads selection is valid.",
+    "Variables match input types: ThreadsFilter.serviceLevelAgreements: ServiceLevelAgreementFilter { types: [ServiceLevelAgreementType!], statuses: [ServiceLevelAgreementStatus!] } (schema.ts:6564, 6624-6628) and the enum values listed in the getThreads header match schema.ts:6617-6622 and :14057-14070. CI validates all operation files against schema.ts via `pnpm run lint` -> lint:mcpGraphql (package.json:27,31; tools/graphql-lint/validateMcpOperations.ts).",
+    "PR claim that always passing `serviceLevelAgreements: { statuses: null, types: null }` is a no-op is true: threadsFilter.ts:58-72 parses it to {types:null,statuses:null,updatedAt:null}; both DB code paths skip the EXISTS subquery when all three are null (packages/aggregates/src/thread/threadDbFilterUtils.ts:647-649 and :943-947). Unfiltered getThreads SQL is unchanged.",
+    "PR claim that threads with no tier and no SLA policy pay no query is true (packages/core-graphql/src/resolvers.ts:7761-7769). Otherwise the field is DataLoader batched into one `SELECT DISTINCT ON (thread_id, service_level_agreement_type) ... ORDER BY created_at DESC` per request (coreGraphqlDataloader.ts:898-918, serviceLevelAgreementTrackerDb.ts:151-155), so searchThreads first:50 adds at most one query.",
+    "Header text in getThreads is accurate: the filter is EXISTS over all tracker rows so a historical BREACHED row matches (threadDbFilterUtils.ts:947-990), while the summary is the newest row per type (DISTINCT ON ... created_at DESC).",
+    "Deploy/rollback: only operation files change; the container copies them at build (services/mcp-server/Dockerfile:12) and apollo-mcp-server validates them against the schema fetched at startup from ${coreApiEndpoint}/graphql/v1/schema.graphql (entrypoint.sh:22-23, mcpServerStack.ts:138). All referenced types already exist in schema.ts at HEAD~1, so no ordering dependency on an API deploy from this PR; rollback is a plain revert and redeploy with no state.",
+    "Dead code: nothing removed; the only replaced line is a comment in getThreads.graphql:2. No other repo consumer reads these operation files besides the validator and the Docker build."
+  ]
+}

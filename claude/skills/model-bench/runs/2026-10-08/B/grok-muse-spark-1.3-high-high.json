@@ -1,0 +1,49 @@
+{
+  "findings": [
+    {
+      "severity": "breaking",
+      "title": "Batch tenant lookup collects external IDs from the wrong record set, so the map is always empty",
+      "location": "packages/importers/src/handlers/importCustomers.ts:484-517 (recordsWithTenantStubs + getTenantsByExternalId call) and :327 (empty-map default)",
+      "failure": "In production importCustomers traffic, every record carrying tenantExternalIds gets tenantsToLink=[] so no tenant memberships are created; when shouldSkipTenantlessCustomers is true those customers are wrongly skipped as tenantless, and the import still returns success. Single-record callers (importThreads.ts:140, importThreadMessage.ts:150, importAllCustomersAndUsersInRecords.ts:59) pass no map and hit the `?? new Map()` default, so any ImportCustomer with tenantExternalIds loses its links there too. Records written while this is live stay unlinked until re-synced.",
+      "fix": "Build the batch from the complement set (records with tenantExternalIds, i.e. inRecords minus recordsWithTenantStubs) instead of recordsWithTenantStubs.flatMap((r) => r.tenantExternalIds ?? []), and restore a per-record getTenantsFromIdentifiers fallback inside importCustomer when args.tenantsByExternalId is undefined.",
+      "evidence": "HEAD defines recordsWithTenantStubs as records where `r.tenantExternalIds === undefined || length === 0`, then calls getTenantsByExternalId(ctx, recordsWithTenantStubs.flatMap((r) => r.tenantExternalIds ?? [])), which is [] by construction; HEAD~1 derived tenants from inRecords-filtered stubs correctly and did a per-record getTenantsFromIdentifiers for tenantExternalIds records. Repo-wide search `importCustomer\\b|tenantsByExternalId` shows the only tenantsByExternalId supplier is importCustomers and the three single callers pass no map.",
+      "confidence": "high"
+    },
+    {
+      "severity": "regression",
+      "title": "Tenant chunk lookup errors are swallowed into a partial map and reported as success",
+      "location": "packages/importers/src/handlers/importCustomers.ts:272-290 (getTenantsByExternalId warn+continue, always Ok)",
+      "failure": "A transient DB/lookup failure on one 500-ID chunk logs a warn and continues, returning a partial tenantsByExternalId map; missing keys are then treated as 'no such tenant exists' (per the new arg comment), so affected customers silently lose memberships or are wrongly skipped as tenantless with a success summary. The old per-record path returned scope.fail for that record, making the failure visible (and aborting the batch via Result.err).",
+      "fix": "Return Result.err on chunk lookup failure (fail the batch visibly) or retry/fall back to per-record lookup instead of continue; do not treat lookup-error absence the same as tenant-not-found.",
+      "evidence": "HEAD getTenantsByExternalId has `if (lookupResult.isErr) { ctx.log.warn(...); continue; }` and a single `return Result.ok(...)` with no Err path, versus HEAD~1 `if (lookupResult.isErr) return scope.fail(...)`. The new `// Must cover every tenantExternalId... missing key means no such tenant exists` comment confirms absence is conflated with lookup failure.",
+      "confidence": "high"
+    },
+    {
+      "severity": "regression",
+      "title": "upsertCustomer fast path omits importedByJobDefinitionId, so re-imports never restamp attribution",
+      "location": "packages/aggregates/src/customers/customerAggregate.ts:643-665 (fast path) vs packages/aggregates/src/utils/shouldPerformCustomerUpsertUpdate.ts:14-20",
+      "failure": "parseImportCustomer always sets onUpdate to {}, so every repeat CRM sync of an existing customer takes the new no-transaction NOOP path, which calls shouldPerformCustomerUpsertUpdate(existing, onUpdate) without importedByJobDefinitionId. The helper returns true when the job ID differs, and the old transactional path then wrote the new importedByJobDefinitionId (and published customer_changed). The new path returns the stale row as NOOP with no write and no event, leaving attribution frozen on the first importing job.",
+      "fix": "Pass importedByJobDefinitionId into the fast-path shouldPerformCustomerUpsertUpdate call (and only return NOOP when it also says no update), matching updateCustomerUnsafe behaviour.",
+      "evidence": "Helper source: `if (importedByJobDefinitionId && importedByJobDefinitionId !== customer.importedByJobDefinitionId) return true;`. Fast-path call passes 2 args; transactional updateCustomerUnsafe path passes importedByJobDefinitionId and writes it via `...(importedByJobDefinitionId !== undefined && !== null ? { importedByJobDefinitionId } : {})`. parseImportCustomer sets `onUpdate: {}` unconditionally.",
+      "confidence": "high"
+    },
+    {
+      "severity": "dead-code",
+      "title": "importCustomers error branch on batch tenant lookup is unreachable",
+      "location": "packages/importers/src/handlers/importCustomers.ts:514-516 (if tenantsByExternalIdResult.isErr return Err)",
+      "failure": "No runtime failure; the branch can never execute, misleading future editors into thinking chunk failures are handled.",
+      "fix": "Remove the isErr branch or make getTenantsByExternalId fallible (return Err on chunk failure) so the branch means something.",
+      "evidence": "Repo-wide search `tenantsByExternalId|getTenantsByExternalId` shows the single definition at :272-290 whose body contains zero `Result.err` returns (only warn+continue then `Result.ok`); the caller branch therefore never triggers.",
+      "confidence": "high"
+    }
+  ],
+  "checked_fine": [
+    "Deploy: no infra, SST/OpenTofu, env-var, secret, permission, or CloudFormation export changes in the diff.",
+    "Contract: upsertCustomer result shape ({customer, result:'NOOP'|'UPDATED'|'CREATED'}) and importCustomer/importCustomers signatures are additive (optional tenantsByExternalId); no routes, event schemas, or stored-schema fields change.",
+    "Data: no deletes, retention changes, DeletionPolicy edits, or migrations; updateCustomerUnsafe write set and company/email full-path behaviour unchanged.",
+    "Silent-regression parity: NOOP publishes no domain event in both old (updateCustomerUnsafe early return) and new fast path; permission check still precedes the fast read; email/companyId updates still take the full transactional path with company resolution.",
+    "Operability: TENANT_LOOKUP_CHUNK_SIZE=500 is used at the single lookup site; lodash chunk/uniq imports are both referenced.",
+    "Rollback: no schema, export, or event one-way door; rolling back restores per-record tenant lookup and job-ID restamping (records left unlinked/misstamped while the bug is live need re-sync).",
+    "Blast radius: shared-helper changes are confined to the two call graphs above; no shared constants, permission strings, or unrelated aggregates edited."
+  ]
+}

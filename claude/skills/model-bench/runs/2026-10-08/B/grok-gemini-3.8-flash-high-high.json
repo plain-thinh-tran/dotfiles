@@ -1,0 +1,67 @@
+{
+  "findings": [
+    {
+      "severity": "breaking",
+      "title": "Batch tenant lookup queries records lacking tenantExternalIds, causing all batch customer-tenant links to be lost or customers skipped",
+      "location": "packages/importers/src/handlers/importCustomers.ts:508-511",
+      "failure": "In importCustomers, getTenantsByExternalId is invoked with recordsWithTenantStubs.flatMap((r) => r.tenantExternalIds ?? []). However, recordsWithTenantStubs is defined on line 485 as inRecords.filter((r) => r.tenantExternalIds === undefined || r.tenantExternalIds.length === 0). Because this subset contains no records with tenantExternalIds, the flattened array is always empty ([]), and getTenantsByExternalId produces an empty Map. In importCustomer, tenantsToLink resolves to [] for every record. If shouldSkipTenantlessCustomers is enabled, all customers with tenantExternalIds are skipped with 'None of the tenantExternalIds exist in our database'. If false, customers are imported without linking any tenant memberships.",
+      "fix": "Pass inRecords.flatMap((r) => r.tenantExternalIds ?? []) to getTenantsByExternalId instead of recordsWithTenantStubs.",
+      "evidence": "packages/importers/src/handlers/importCustomers.ts:485-487 explicitly filters recordsWithTenantStubs where tenantExternalIds is undefined or has length 0; lines 508-511 flatMaps recordsWithTenantStubs.flatMap((r) => r.tenantExternalIds ?? []), which evaluates to [].",
+      "confidence": "high"
+    },
+    {
+      "severity": "regression",
+      "title": "Standalone importCustomer callers without pre-computed tenant map lose tenantExternalId lookup",
+      "location": "packages/importers/src/handlers/importCustomers.ts:326-331",
+      "failure": "The PR description states that single-customer callers keep the per-customer lookup, but importCustomer removed the fallback call to tenantAggregate.getTenantsFromIdentifiers when args.tenantsByExternalId is not provided. Instead, line 327 falls back to an empty new Map<string, Tenant>(). Direct callers such as importThreads.ts (line 140), importThreadMessage.ts (line 150), and importAllCustomersAndUsersInRecords.ts (line 59) do not supply tenantsByExternalId, causing tenantsToLink to always resolve to [] and silently dropping tenant memberships for imported customers.",
+      "fix": "When args.tenantsByExternalId is undefined, fall back to querying tenantAggregate.getTenantsFromIdentifiers per customer as implemented in HEAD~1.",
+      "evidence": "packages/importers/src/handlers/importCustomers.ts:327 defines const tenantsByExternalId = args.tenantsByExternalId ?? new Map<string, Tenant>(), replacing lines 301-308 of HEAD~1 where tenantAggregate.getTenantsFromIdentifiers was queried when nangoCustomer.tenantExternalIds was present.",
+      "confidence": "high"
+    },
+    {
+      "severity": "regression",
+      "title": "Silently ignoring tenant lookup errors causes customers to be skipped or memberships dropped",
+      "location": "packages/importers/src/handlers/importCustomers.ts:282-286",
+      "failure": "In getTenantsByExternalId, when a chunk lookup fails (lookupResult.isErr), the error is logged as a warning and skipped with continue. The function then returns Result.ok(tenantsByExternalId) with missing tenants. Downstream callers in importCustomer interpret missing keys as confirmation that the tenant does not exist in the database, causing customers to be skipped or imported without tenant memberships. This also violates the AGENTS.md rule: 'NEVER silently ignore errors \u2014 Check every Result/Maybe; never await a Result without checking .isErr. Logging and continuing is not enough \u2014 return/throw to the caller'.",
+      "fix": "Return Result.err(lookupResult.error) immediately when lookupResult.isErr inside getTenantsByExternalId.",
+      "evidence": "packages/importers/src/handlers/importCustomers.ts:282-286 logs lookupResult.error and executes continue, returning Result.ok(tenantsByExternalId) on line 290 despite chunk query failures.",
+      "confidence": "high"
+    },
+    {
+      "severity": "regression",
+      "title": "upsertCustomer fast path omits importedByJobDefinitionId, preventing job definition ownership updates",
+      "location": "packages/aggregates/src/customers/customerAggregate.ts:658-665",
+      "failure": "When checking whether an existing customer requires an update outside a transaction, shouldPerformCustomerUpsertUpdate(existingCustomerResult.value.value, onUpdate) is called without passing importedByJobDefinitionId. If a customer already exists with a different imported_by_job_definition_id (or null) and the upsert specifies importedByJobDefinitionId, shouldPerformCustomerUpsertUpdate evaluates to false instead of true, returning NOOP and skipping the database update that sets customer.imported_by_job_definition_id.",
+      "fix": "Pass importedByJobDefinitionId as the third argument to shouldPerformCustomerUpsertUpdate: !shouldPerformCustomerUpsertUpdate(existingCustomerResult.value.value, onUpdate, importedByJobDefinitionId).",
+      "evidence": "packages/aggregates/src/utils/shouldPerformCustomerUpsertUpdate.ts:11-21 returns true when importedByJobDefinitionId && importedByJobDefinitionId !== customer.importedByJobDefinitionId. Line 1032 of customerAggregate.ts passes importedByJobDefinitionId, but line 660 omits it.",
+      "confidence": "high"
+    },
+    {
+      "severity": "refactor",
+      "title": "Interpolated string in error log violates structured logging conventions",
+      "location": "packages/aggregates/src/customers/customerAggregate.ts:651-655",
+      "failure": "The error log statement uses %s format string interpolation: ctx.log.error({ err: existingCustomerResult.error }, 'Failed to select customer by identifier %s', identifier.type). Repo rules in AGENTS.md mandate structured logs without %s interpolation.",
+      "fix": "Include identifierType: identifier.type in the structured log payload object and use a static log message: ctx.log.error({ err: existingCustomerResult.error, identifierType: identifier.type }, 'Failed to select customer by identifier').",
+      "evidence": "AGENTS.md Critical Rules: 'Structured logs only \u2014 never %s interpolation: ctx.log.info({ importJobId: id }, 'Created import job')'.",
+      "confidence": "high"
+    },
+    {
+      "severity": "worth-knowing",
+      "title": "Duplicate select query executed on non-noop customer upserts",
+      "location": "packages/aggregates/src/customers/customerAggregate.ts:646-673",
+      "failure": "For upserts where onUpdate.email and onUpdate.companyId are undefined, customerDb.getCustomerByIdentifier is executed outside withTransaction at line 646. If the customer does not exist or requires an update, execution enters withTransaction, which executes customerDb.getCustomerByIdentifier a second time at line 668. While this eliminates transaction acquisition for unchanged records, it introduces an additional roundtrip select query for updates and creates.",
+      "fix": "Document the intentional double-read trade-off or pass the already-selected customer record into the transactional block if transaction isolation semantics permit.",
+      "evidence": "packages/aggregates/src/customers/customerAggregate.ts:646 runs customerDb.getCustomerByIdentifier outside the transaction, and line 668 runs it again inside withTransaction.",
+      "confidence": "medium"
+    }
+  ],
+  "checked_fine": [
+    "Deploy: No changes to OpenTofu modules, SST stacks, database migrations, environment variables, secrets, or IAM permissions; deploy pipeline will apply cleanly.",
+    "Contract: External API contracts, GraphQL schemas, public webhooks, and EventBridge domain event schemas (CustomerChangedEventPayloadV1) are preserved.",
+    "Data: No tables, columns, or records are deleted, and data retention policies remain untouched.",
+    "Silent regression (upsert company/email handling): upsertCustomer correctly routes all updates touching email or companyId directly to withTransaction, preserving domain-name company resolution and company validation.",
+    "Rollback: Rolling back to HEAD~1 safely restores transactional upserts and per-customer tenant lookups without database schema or state conflicts.",
+    "Blast radius: Non-CRM customer operations (createCustomer, getCustomerById, getCustomers) remain unchanged and execute identical logic to HEAD~1.",
+    "Operability: Batch chunking size (TENANT_LOOKUP_CHUNK_SIZE = 500) remains well within PostgreSQL query parameter limits."
+  ]
+}

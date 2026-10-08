@@ -1,0 +1,59 @@
+{
+  "findings": [
+    {
+      "severity": "breaking",
+      "title": "Always sending an all null serviceLevelAgreements object makes the main thread filter builder emit an empty SQL fragment, producing invalid SQL on every unfiltered getThreads call",
+      "location": "services/mcp-server/operations/getThreads.graphql:100",
+      "failure": "getThreads now always sends filters.serviceLevelAgreements = {statuses: null, types: null}. ThreadsFilter (packages/core-graphql/src/threads/threadsFilter.ts:58) keeps that as a non null object with updatedAt null, so DBThreadFilters.serviceLevelAgreements is non null and hasNonNullBaseFields is true. buildBaseFilterSql (threadDbFilterUtils.ts:833) runs rdsDbUtils.filtering.buildFilters, which calls the serviceLevelAgreements builder at threadDbFilterUtils.ts:943. For an all null filter that builder returns sql.fragment`` (line 946). buildFilters uses lodash compact (packages/db/src/filtering.ts:111), which only drops falsy values, so the empty fragment object is kept and joined with ' AND ' (filtering.ts:125). The result is a dangling 'x AND ' or '()' in the WHERE clause (buildRecursiveFilters wraps it as `(${join})` at threadDbFilterUtils.ts:1275). Postgres rejects it, so every getThreads call without SLA arguments (the common case, including the default 'show my open threads') returns an internal error. The 'no-op in the DB layer' claim in the PR only holds for the EXISTS builder (threadDbFilterUtils.ts:647-650), which has the null guard; the base path used for top level filters does not. Every sibling builder that can be all null returns 1=1 (surveyResponse line 1164, rangeFilter via ignoreFilter at packages/db/src/filtering.ts:32). No existing test covers an all null SLA object: threadsQueryFilters.slas.litest.ts and threadDbFilterUtils.test.ts:850-955 always set at least one member. I could not execute vitest (no node_modules), so this is derived from code reading.",
+      "fix": "Do not send the object when no SLA arg is given. Follow the existing pattern in the same file (surveyResponse): declare `$serviceLevelAgreements: ServiceLevelAgreementFilter = null` and pass `serviceLevelAgreements: $serviceLevelAgreements` (the model passes {statuses, types} when it wants to filter). Alternatively or additionally return ignoreFilter()/`1 = 1` instead of sql.fragment`` at threadDbFilterUtils.ts:946 (and the agentStatus builder at line 979) and add a createFilters unit test for an all null SLA filter plus a litest that calls threads with serviceLevelAgreements: {statuses: null, types: null}.",
+      "evidence": "services/mcp-server/operations/getThreads.graphql:100-103; packages/aggregates/src/thread/threadDbFilterUtils.ts:943-947, 1164, 1275; packages/db/src/filtering.ts:32,110-126; packages/core-graphql/src/threads/threadsFilter.ts:58-70",
+      "confidence": "medium"
+    },
+    {
+      "severity": "regression",
+      "title": "Non null serviceLevelAgreementStatusSummary couples thread list and detail tools to the SLA tracker dataloader",
+      "location": "services/mcp-server/operations/getThreads.graphql:174",
+      "failure": "Thread.serviceLevelAgreementStatusSummary is declared non null (packages/core-graphql/src/schema.ts:13932). For any thread with a tier or policy the resolver calls serviceLevelAgreementStatusResolver (resolvers.ts:7770), which throws via translateDomainErrorToQueryError on a DB error (serviceLevelAgreementStatusResolver.ts:15-18). Because the field is non null the error bubbles up through the thread node, so a tracker query failure or timeout now fails the whole getThreads, searchThreads or getThreadDetails response instead of just the SLA data. Before this PR these three tools never touched service_level_agreement_trackers. The PR's 'pay nothing' argument only covers threads with no tier and no policy; threads on tiers (the ones this is for) add one batched query per page.",
+      "fix": "Accept and verify in a litest or devlocal that a tracker failure degrades acceptably, or keep the SLA block out of the default list selection (see size finding) so the core listing tools do not depend on it.",
+      "evidence": "packages/core-graphql/src/resolvers.ts:7761-7776; packages/core-graphql/src/resolvers/serviceLevelAgreementStatusResolver.ts:15-18; packages/core-graphql/src/schema.ts:13932; packages/core-graphql/src/coreGraphqlDataloader.ts:898-916",
+      "confidence": "low"
+    },
+    {
+      "severity": "worth-knowing",
+      "title": "Every thread in list tools now carries four SLA targets with null padded fields, inflating MCP response size and LLM context",
+      "location": "services/mcp-server/operations/searchThreads.graphql:114",
+      "failure": "searchThreads returns up to 50 threads per call (default first: 50) and getThreads up to the page size. Each thread now adds serviceLevelAgreementStatusSummary with four targets, each with __typename plus nested {iso8601} objects, and Pending/ImminentBreach always also emit pausedAt: null and remainingMinutesAtPause: null. For tiered workspaces that is roughly 40 to 60 extra lines of JSON per thread, so a 50 result search adds thousands of tokens for data most search queries do not need, and it raises cost and truncation risk for MCP clients (claude.ai, ChatGPT, Cursor) that these tools serve.",
+      "fix": "In list tools (getThreads, searchThreads) select only __typename plus the one deadline field per status and drop pausedAt/remainingMinutesAtPause; keep the full selection only in getThreadDetails. Optionally limit to firstResponseTime and nextResponseTime for lists, matching the agent sandbox SLA_FRAGMENT.",
+      "evidence": "services/mcp-server/operations/searchThreads.graphql:114-292 (first: Int = 50 at line 38); lambdas/agent-sandbox-api/src/proxy/services/plain/fragments.ts:1-20 (existing compact SLA selection used for lists)",
+      "confidence": "medium"
+    },
+    {
+      "severity": "refactor",
+      "title": "The same 45 line selection is copy pasted 12 times instead of using a named fragment",
+      "location": "services/mcp-server/operations/getThreads.graphql:174",
+      "failure": "Each of the 3 files repeats an identical per target selection 4 times (561 added lines). Any schema change to ServiceLevelAgreementStatusDetail (new status, renamed field) must be edited in 12 places, and one missed copy silently changes the shape for a single target or fails operation validation at MCP server start.",
+      "fix": "Define one `fragment ServiceLevelAgreementStatusDetailFields on ServiceLevelAgreementStatusDetail { __typename ... on ... }` per operation file and spread it on the four targets. Fragments are already used in the same directory (createBroadcast.graphql, getBroadcasts.graphql, getBroadcastDetails.graphql and others).",
+      "evidence": "services/mcp-server/operations/getThreads.graphql:174-352; getThreadDetails.graphql:96-274; searchThreads.graphql:114-292 (identical blocks); grep '^fragment ' hits 10 broadcast operations",
+      "confidence": "high"
+    },
+    {
+      "severity": "worth-knowing",
+      "title": "slaStatuses/slaTypes reject empty arrays and status only filters rely on a type leading index",
+      "location": "services/mcp-server/operations/getThreads.graphql:78",
+      "failure": "ThreadsFilter validates both lists with minLength(1) (threadsFilter.ts:59-66), so a model that passes slaStatuses: [] (common for 'no filter') gets a schemaValidationFailed error from the threads resolver instead of an ignored filter; the doc comment only says to leave the variable null. Separately, the documented example `slaStatuses: [BREACHING]` has no type, while the only supporting index is (workspace_id, service_level_agreement_type, status, updated_at) (migrations/src/main/1790293769277_...sql), so a status only filter has to walk all of the workspace's tracker rows in the index for every candidate thread in the CREATED_AT ordered scan.",
+      "fix": "State in the header that empty lists are invalid (pass null), and confirm the status only EXISTS plan on a large workspace (EXPLAIN) before advertising it, or default slaTypes in the example to a specific type.",
+      "evidence": "packages/core-graphql/src/threads/threadsFilter.ts:59-66; packages/aggregates/src/thread/threadDbFilterUtils.ts:647-685; migrations/schema/main.sql:6882",
+      "confidence": "low"
+    }
+  ],
+  "checked_fine": [
+    "Every selected type and field exists in the schema (ServiceLevelAgreementStatusDetail union members, breachingAt/pausedAt/remainingMinutesAtPause, breachedAt, achievedAt, completedAt, cancelledAt) and resolvers exist for each (resolvers.ts:9433-9462)",
+    "All four target blocks are identical in all three files and sit on the Thread node (searchThreads under node.thread)",
+    "ServiceLevelAgreementStatus and ServiceLevelAgreementType enum values in the new variables and doc comments match schema.ts:6617 and 14057",
+    "Summary resolver is dataloader backed (one batched query per request, getLatestServiceLevelAgreementTrackersByThreadIdsUnsafe) and returns all null without a query when tier and policy are both null",
+    "Non empty filters use the EXISTS path with workspace scoping and no new JOIN or DISTINCT; the SLA filter semantics (matches any tracker row) are documented accurately in the getThreads header",
+    "searchThreads and getThreadDetails changes are selection set only with no new variables, so existing clients and tool input schemas are unchanged",
+    "Rollback is a plain revert of three .graphql files, no schema, migration or data change",
+    "MCP server loads operations from /data/operations at startup (entrypoint.sh, mcp.config.yaml), so operations fail fast on a bad selection rather than at call time"
+  ]
+}

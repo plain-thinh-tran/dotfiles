@@ -1,0 +1,32 @@
+{
+  "findings": [
+    {
+      "severity": "breaking",
+      "title": "All-null serviceLevelAgreements object renders invalid SQL, so every getThreads call without SLA filters fails",
+      "location": "services/mcp-server/operations/getThreads.graphql:100",
+      "failure": "The op always sends serviceLevelAgreements: { statuses: $slaStatuses, types: $slaTypes }. When the agent leaves both null (the default, i.e. nearly every getThreads call, filtered by status/assignee/etc. or not), ThreadsFilter zod parses it into a non-null object { types: null, statuses: null, updatedAt: null }. At the top level the DB builder returns an EMPTY fragment for it, and buildFilters only drops nulls, not empty fragments, then joins with ' AND '. The WHERE clause becomes '... AND (1 = 1 AND )' (createdAt all-null renders '1 = 1'), so Postgres throws a syntax error, threadDb.getThreads returns Err, and the MCP getThreads tool (plus its totalCount query) returns a GraphQL internal error for every customer. The PR's claim that an all-null object is a no-op only holds for the nested EXISTS path, not the top-level path the MCP query takes.",
+      "fix": "Fix the backend before (or together with) shipping this op, as the core API and MCP server deploy separately: in packages/aggregates/src/thread/threadDbFilterUtils.ts:946 and :979 return rdsDbUtils.filtering.ignoreFilter() (packages/db/src/filtering.ts:10, the helper rangeFilter already uses for its all-null case) instead of sql.fragment``, or collapse an all-null object to null in packages/core-graphql/src/threads/threadsFilter.ts:58. Add a litest in lambdas/core-graphql-api/src/threads/threadsQueryFilters.slas.litest.ts that runs threads with serviceLevelAgreements: {} and with { statuses: null, types: null }. Do not merge the op until that passes.",
+      "evidence": "threadsFilter.ts:58-72 parses the object to non-null with null defaults. determineThreadFilters.ts:179-180 spreads it through unchanged. threadDbFilterUtils.ts:943-947 returns sql.fragment`` when statuses/types/updatedAt are all null. packages/db/src/filtering.ts:114-124 is compact(...) and then sql.join(parts, ' AND '), and lodash compact keeps the truthy empty token. threadDbFilterUtils.ts:1238-1242 and 1278-1281 wrap that as '(… AND …)'. threadDb.ts:1252 and 1357 emit 'WHERE t.workspace_id = … AND ${scopeFilter} AND ${filters}'. I ran slonik 45.5.0 from the repo (packages/db/node_modules/slonik): sql.join([fragment`1 = 1`, fragment``], fragment` AND `) prints '1 = 1 AND ', so the filter becomes '(1 = 1 AND )'. No unit or litest covers the all-null top-level case (threadDbFilterUtils.test.ts:850-950 only exercises non-null fields). The only other caller, agent-sandbox threadOps.ts:271-275, sets the object only when slaStatus is defined, so this PR is the first production caller to send it all-null. The nested path guards correctly (threadDbFilterUtils.ts:647-685) but is used only inside and/or/not.",
+      "confidence": "high"
+    },
+    {
+      "severity": "refactor",
+      "title": "SLA status union selection copied 12 times across three operations",
+      "location": "services/mcp-server/operations/getThreads.graphql:174",
+      "failure": "The same 44 line ServiceLevelAgreementStatusDetail selection is pasted for each of the 4 targets in each of the 3 files. A future schema change to one detail type (e.g. a new field or union member) has to be made in 12 places, and missing one lets the tools drift apart quietly.",
+      "fix": "Define one in-file fragment per operation, e.g. fragment GetThreadsSlaStatusDetail on ServiceLevelAgreementStatusDetail { __typename ... on ServiceLevelAgreementStatusDetailPending {...} ... }, and spread it under each target. Prefix the name per file as the broadcast ops do.",
+      "evidence": "The existing pattern is in-file, file-prefixed fragments in MCP ops: createBroadcast.graphql:75 and :118-175 (CreateBroadcastFilterFields etc.) and createBroadcastAudience.graphql:41 and :70-108. Duplicate blocks start at getThreadDetails.graphql:96, getThreads.graphql:174 and searchThreads.graphql:114.",
+      "confidence": "medium"
+    }
+  ],
+  "checked_fine": [
+    "Schema already exposes everything selected: Thread.serviceLevelAgreementStatusSummary (schema.ts:13932), the 6 detail types and their fields (schema.ts:14072-14125) and ThreadsFilter.serviceLevelAgreements with ServiceLevelAgreementFilter.types/statuses (schema.ts:6564, 6624-6628). The MCP server fetches the full printed schema at container start (entrypoint.sh:23, graphql-schema/src/schemaSdlResponse.ts), so there is no deploy ordering issue for the selection sets.",
+    "Variable types match the schema: [ServiceLevelAgreementStatus!] and [ServiceLevelAgreementType!], and the enum values in the getThreads comment match schema.ts:6617-6622 and 14057-14070.",
+    "Union resolveType covers all 6 tracker statuses (resolvers.ts:11918-11935), and the field resolvers map breachTime/completedAt/cancelledAt correctly (resolvers.ts:9427-9458).",
+    "No N+1: the summary resolver short circuits when there is no tier and no policy (resolvers.ts:7761-7768), otherwise it uses serviceLevelAgreementTrackerDataLoader (serviceLevelAgreementStatusResolver.ts:15), so the 50-row searchThreads page is batched.",
+    "Selections are inserted at the Thread level in all three ops (getThreadDetails.graphql:96, getThreads.graphql:174 under edges.node, searchThreads.graphql:114 under node.thread).",
+    "The searchThreads filters are unchanged, so the SQL issue does not affect searchThreads. getThreadDetails takes no filter.",
+    "No SLA join is added for filtering, so requiresDistinct and row multiplication are unchanged (threadDbFilterUtils.ts:177-182).",
+    "Rollback is just redeploying the previous MCP image. There is no data or schema migration."
+  ]
+}

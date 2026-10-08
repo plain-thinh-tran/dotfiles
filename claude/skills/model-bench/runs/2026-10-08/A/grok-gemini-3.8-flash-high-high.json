@@ -1,0 +1,24 @@
+{
+  "findings": [
+    {
+      "severity": "worth-knowing",
+      "title": "getThreadDetails MCP tool comment misstates __typename values as short names instead of full schema type names",
+      "location": "services/mcp-server/operations/getThreadDetails.graphql:5-6",
+      "failure": "The header comment states that __typename is 'Pending, ImminentBreach, Breaching, Achieved, Breached, or Cancelled'. In GraphQL execution, __typename resolves to the concrete GraphQL Object Type name: 'ServiceLevelAgreementStatusDetailPending', 'ServiceLevelAgreementStatusDetailImminentBreach', 'ServiceLevelAgreementStatusDetailBreaching', 'ServiceLevelAgreementStatusDetailAchieved', 'ServiceLevelAgreementStatusDetailBreached', or 'ServiceLevelAgreementStatusDetailCancelled'. Because Apollo MCP Server exposes operation header comments as the tool and parameter description to AI agents, agents making exact equality checks on __typename will fail to recognize the status.",
+      "fix": "Update the description comment in services/mcp-server/operations/getThreadDetails.graphql to document the full GraphQL type names (e.g. 'ServiceLevelAgreementStatusDetailPending') or explicitly clarify that status names are prefixed with 'ServiceLevelAgreementStatusDetail'.",
+      "evidence": "packages/core-graphql/src/schema.ts (lines 14112-14118) defines union ServiceLevelAgreementStatusDetail with members prefixed with ServiceLevelAgreementStatusDetail (e.g. ServiceLevelAgreementStatusDetailPending). In packages/core-graphql/src/resolvers.ts (lines 11918-11935), resolveServiceLevelAgreementStatusDetail returns these full type names.",
+      "confidence": "high"
+    }
+  ],
+  "checked_fine": [
+    "Deploy: No OpenTofu, SST, migration, or Dockerfile changes; operations are copied statically into the MCP server container and pass GraphQL schema validation.",
+    "Contract parity on getThreads: Defaulting $slaStatuses and $slaTypes to null passes { statuses: null, types: null } to ThreadsFilter, which threadDbFilterUtils.ts (lines 648-650) evaluates as a no-op, preserving identical SQL WHERE clauses and result sets for existing unfiltered calls.",
+    "Contract backwards compatibility: Added variables $slaStatuses and $slaTypes in getThreads.graphql are optional with null defaults, and added serviceLevelAgreementStatusSummary selection fields across all three operations are purely additive.",
+    "Data: No migrations, database schema updates, data deletes, or retention adjustments.",
+    "Silent regression & performance: Threads lacking both a tier and an SLA policy immediately return nulls without database queries (packages/core-graphql/src/resolvers.ts:7762-7769), and threads with SLAs batch database lookups in a single query via serviceLevelAgreementTrackerDataLoader.",
+    "Operability: ECS task definitions build from local asset Dockerfiles (infra/stacks/mcpServerStack.ts:135), ensuring operation updates trigger fresh image builds upon deployment.",
+    "Rollback: Rolling back to HEAD~1 restores earlier operation definitions without data loss, schema desynchronization, or orphaned infrastructure.",
+    "Blast radius: Changes are isolated to services/mcp-server/operations/*.graphql and do not affect core GraphQL resolvers, domain aggregates, database tables, or other internal callers.",
+    "Dead code: All added GraphQL variables ($slaStatuses, $slaTypes) are mapped into query filter arguments and all requested serviceLevelAgreementStatusSummary fields are populated in the response payload."
+  ]
+}

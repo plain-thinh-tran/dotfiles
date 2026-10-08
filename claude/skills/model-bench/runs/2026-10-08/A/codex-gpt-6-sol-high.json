@@ -1,0 +1,32 @@
+{
+  "findings": [
+    {
+      "severity": "worth-knowing",
+      "title": "SLA filtering can return threads whose current status does not match",
+      "location": "services/mcp-server/operations/getThreads.graphql:100",
+      "failure": "A thread with an older BREACHED next-response tracker and a newer PENDING one matches `slaStatuses: [BREACHED]`, although its returned summary says PENDING. Such threads also count toward `totalCount` and occupy page slots, so the tool cannot reliably answer a request for threads currently breached.",
+      "fix": "If the tool is meant to search current status, filter on the latest tracker for each thread and SLA type. Verify the behavior with a repeated next-response or total-resolution target.",
+      "evidence": "The new operation passes the variables to `serviceLevelAgreements`. `packages/aggregates/src/thread/threadDbFilterUtils.ts:679` matches any tracker with `EXISTS`, while `packages/aggregates/src/service-level-agreement/serviceLevelAgreementTrackerAggregate.ts:390` supplies the latest tracker to the summary. The operation comments at lines 46–58 acknowledge this mismatch.",
+      "confidence": "high"
+    },
+    {
+      "severity": "refactor",
+      "title": "Use file-local fragments for the repeated SLA detail selection",
+      "location": "services/mcp-server/operations/getThreadDetails.graphql:96",
+      "failure": "The same six status selections are repeated for four targets in each of three operations. A future field change can update one target while leaving the others with different output.",
+      "fix": "Define one fragment on `ServiceLevelAgreementStatusDetail` in each operation file and spread it under all four targets.",
+      "evidence": "The repeated blocks start at `getThreadDetails.graphql:96`, `getThreads.graphql:174`, and `searchThreads.graphql:114`. `services/mcp-server/operations/duplicateBroadcast.graphql:96` documents and demonstrates the existing file-local fragment pattern.",
+      "confidence": "high"
+    }
+  ],
+  "checked_fine": [
+    "Deploy: only operation files changed; the existing schema already defines every selected field and enum, and Docker copies the operations directory into the MCP image.",
+    "Contract: existing arguments, selections, routes, authentication, and headers remain; the current-status filter mismatch is reported above.",
+    "Data: no writes, migrations, retention changes, or resource deletions.",
+    "Silent regression: no prior selections or query options were removed; SLA summaries use the existing batched resolver.",
+    "Operability: operation edits are included by the existing Docker COPY; selection drift is covered by the refactor finding.",
+    "Rollback: the prior operations remain valid against the unchanged schema, with no data or infrastructure one-way door.",
+    "Blast radius: no shared schema, resolver, filter, constant, or infrastructure code changed.",
+    "Dead code: a search across services, packages, lambdas, infra, terraform, testing, docs, and tools found the changed operations loaded through the configured MCP operations directory; no new unused export or branch was found."
+  ]
+}

@@ -1,0 +1,51 @@
+{
+  "findings": [
+    {
+      "severity": "breaking",
+      "title": "Batch tenant lookup always receives an empty ID list",
+      "location": "packages/importers/src/handlers/importCustomers.ts:510",
+      "failure": "Every customer with tenantExternalIds receives an empty tenant map. Tenant-centric jobs skip those customers even when their tenants exist; other jobs import them without tenant memberships. Affected batches can be marked complete, so rolling back code alone will not replay them.",
+      "fix": "Collect tenantExternalIds from inRecords rather than recordsWithTenantStubs. Verify mixed batches and tenant-centric imports, and replay affected batches if this reaches production.",
+      "evidence": "Lines 485–487 restrict recordsWithTenantStubs to records whose tenantExternalIds are absent or empty; line 512 collects IDs exclusively from that list. The in-memory reproduction returned zero IDs for a record containing a valid tenant ID. Local lodash-es 4.17.21 source, chunk.js:36–38, confirms chunk([]) produces no iterations. Lines 339–351 skip customers with no matched tenants. handleImportSyncMessage.ts:547–566 completes processed batches; importRunAggregate.ts:450–451 refuses terminal batches. HEAD~1 performed the lookup per customer.",
+      "confidence": "high"
+    },
+    {
+      "severity": "regression",
+      "title": "Single-customer imports lose their tenant lookup fallback",
+      "location": "packages/importers/src/handlers/importCustomers.ts:327",
+      "failure": "Omitting the new optional map now means every tenant is absent. Thread customers, message authors, and nested customer imports silently lose tenant membership creation. Correcting the batch ID collection does not fix these callers.",
+      "fix": "When tenantsByExternalId is undefined, resolve the record's tenantExternalIds through the aggregate and propagate lookup errors through scope.fail. Preserve the supplied-map path for batches.",
+      "evidence": "HEAD~1 called tenantAggregate.getTenantsFromIdentifiers here; HEAD substitutes new Map(). Existing callers supply only record: importThreads.ts:140, importThreadMessage.ts:150, and importAllCustomersAndUsersInRecords.ts:59. Lines 328–330 consequently produce no tenants, and lines 442–451 bypass membership creation. Repo-wide source searches for importCustomer and tenantsByExternalId found no map supplied by those callers.",
+      "confidence": "high"
+    },
+    {
+      "severity": "regression",
+      "title": "The NOOP fast path drops import-job ownership updates",
+      "location": "packages/aggregates/src/customers/customerAggregate.ts:660",
+      "failure": "An existing customer imported by a new job returns NOOP and retains its old or null importedByJobDefinitionId. Previously this changed the stored ownership, returned UPDATED, and published customer_changed. CRM imports consistently pass an empty onUpdate, so they hit this omission.",
+      "fix": "Pass importedByJobDefinitionId as the comparison helper's third argument. Cover both null-to-job and old-job-to-new-job transitions in the aggregate litest.",
+      "evidence": "shouldPerformCustomerUpsertUpdate.ts:16–20 explicitly treats changed job ownership as an update. The existing transactional comparison passes that argument at customerAggregate.ts:1032 and persists it at 1060–1062; the new comparison omits it. importCustomers.ts:241 supplies onUpdate: {}, while 413 forwards the job ID from nango-sync-handler. In-memory execution of the existing helper returned false without the job argument and true with a different job ID.",
+      "confidence": "high"
+    },
+    {
+      "severity": "dead-code",
+      "title": "Batch lookup errors cannot reach the caller's error branch",
+      "location": "packages/importers/src/handlers/importCustomers.ts:514",
+      "failure": "The new isErr branch is unreachable: getTenantsByExternalId logs every lookup error, continues, and only returns Result.ok. Once the batch-input defect is corrected, permission or database failures will become missing tenants, causing skipped customers or missing memberships while reporting success.",
+      "fix": "Return Result.err(lookupResult.error) from the helper on a failed chunk, retaining the caller's error check. Verify that a failed chunk stops the import rather than returning a partial map.",
+      "evidence": "The repo-wide source search for getTenantsByExternalId found one definition and one caller. Its only Result return is Result.ok at line 290; lines 282–284 discard errors. An in-memory execution with a failed lookup returned isOk=true and an empty map. Local true-myth 7.3.0 source, dist/es/result.js:70, confirms an Ok cannot satisfy isErr. This also violates AGENTS.md's requirement to return or throw after checking a failed Result.",
+      "confidence": "high"
+    }
+  ],
+  "checked_fine": [
+    "Deploy: the four changed files introduce no infrastructure, migration, state-import, export, environment-variable, secret, or permission-definition changes; newly used packages are already dependencies.",
+    "Contract: routes, methods, headers, authentication, IP policy, event schemas, and stored schemas are unchanged. Tenant-resolution contract failures are listed above.",
+    "Data: no deletes, retention reductions, or irreversible migrations. Membership importing remains additive, so an empty map does not remove existing memberships.",
+    "Silent regression: HEAD~1 already used selectForUpdate:false; skipping NOOP transactions does not newly remove row-lock protection. Email/company updates retain company resolution and transactional writes.",
+    "Operability: no deployment configuration or redeploy-trigger drift introduced. Batch completeness and optional-map behavior require the fixes above.",
+    "Rollback: HEAD~1 remains compatible with HEAD's rows and events; no schema or infrastructure one-way door. Completed defective imports require replay as described above.",
+    "Blast radius: traced shared upsert callers in GraphQL, Slack, Teams, email, chat, Discord, help center, and demo paths. No additional behavior change identified beyond the ownership omission.",
+    "Design: aggregate boundaries, the existing comparison helper, transactional writes, and event publication remain intact; no independent refactor finding.",
+    "Both changed litest files retain real aggregate calls, factory-generated unique identifiers, and restored spies. Read-only in-memory probes ran; container-backed tests and file-producing checks were not run."
+  ]
+}

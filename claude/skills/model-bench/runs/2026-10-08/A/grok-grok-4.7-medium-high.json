@@ -1,0 +1,31 @@
+{
+  "findings": [
+    {
+      "severity": "breaking",
+      "title": "Unfiltered getThreads always sends an all-null SLA filter that becomes invalid SQL",
+      "location": "services/mcp-server/operations/getThreads.graphql (serviceLevelAgreements input)",
+      "failure": "Every MCP getThreads call, including ones that leave slaStatuses and slaTypes null, fails in Postgres. The operation always sends serviceLevelAgreements: { statuses, types } rather than null. ThreadsFilter keeps that object, and the top-level filter builder returns an empty slonik fragment. buildFilters ANDs that fragment into the WHERE clause, so the query text contains a stray AND (for example ` AND 1 = 1` next to the always-present createdAt `1 = 1` predicate). searchThreads and getThreadDetails do not send this filter.",
+      "fix": "Pass one variable defaulting to null, same as surveyResponse: `$serviceLevelAgreements: ServiceLevelAgreementFilter = null` and `serviceLevelAgreements: $serviceLevelAgreements`. Do not inline an object when both fields can be null. GraphQL cannot omit an input field with @include. If the two-variable tool shape must stay, make an all-null object a no-op before shipping: return `sql.fragment`1 = 1`` (as surveyResponse does) or drop fragments whose sql is empty inside buildFilters.",
+      "evidence": "getThreads.graphql always sets serviceLevelAgreements: { statuses: $slaStatuses, types: $slaTypes } with both variables defaulting to null, and always sets createdAt: { after, before }. threadsFilter.ts parses a present object and defaults updatedAt to null. threadDbFilterUtils.ts buildBaseFilterSql serviceLevelAgreements returns sql.fragment`` when statuses, types, and updatedAt are all null; the nested EXISTS path skips that case, but getThreads uses createFilters \u2192 buildRecursiveFilters \u2192 buildBaseFilterSql \u2192 rdsDbUtils.filtering.buildFilters. packages/db/src/filtering.ts buildFilters keeps every non-null value via lodash compact (a slonik token is truthy) and sql.join's them with AND. packages/db/package.json depends on slonik 45.5.0, whose list serializer inserts the glue before every member after the first, including a member whose sql is empty. threadDb.ts interpolates that fragment in WHERE. surveyResponse's all-null builder returns `1=1`, which is why that same shape is safe.",
+      "confidence": "high"
+    },
+    {
+      "severity": "worth-knowing",
+      "title": "getThreadDetails tells agents the wrong SLA __typename values",
+      "location": "services/mcp-server/operations/getThreadDetails.graphql (operation comment)",
+      "failure": "Agents that follow the tool description match __typename against Pending, ImminentBreach, Breaching, Achieved, Breached, or Cancelled and treat every live status as unknown. The field still resolves, but the documented contract does not match the payload, so getThreadDetails does not answer current SLA status for a client that trusts the comment.",
+      "fix": "Document the GraphQL object type names: ServiceLevelAgreementStatusDetailPending, ServiceLevelAgreementStatusDetailImminentBreach, ServiceLevelAgreementStatusDetailBreaching, ServiceLevelAgreementStatusDetailAchieved, ServiceLevelAgreementStatusDetailBreached, ServiceLevelAgreementStatusDetailCancelled.",
+      "evidence": "The comment says `__typename is the status: Pending, ImminentBreach, Breaching, Achieved, Breached, or Cancelled.` schema.ts names the union members ServiceLevelAgreementStatusDetailPending and the other ServiceLevelAgreementStatusDetail* types. resolvers.ts resolveServiceLevelAgreementStatusDetail returns those strings. GraphQL __typename is the object type name (GraphQL spec, Type Name Introspection), not the ServiceLevelAgreementStatus enum used by slaStatuses.",
+      "confidence": "high"
+    }
+  ],
+  "checked_fine": [
+    "Selection sets match ServiceLevelAgreementStatusSummary and each ServiceLevelAgreementStatusDetail* field (breachingAt, pausedAt, remainingMinutesAtPause, breachedAt, achievedAt, completedAt, cancelledAt), and DateTime.iso8601 exists. Enum names match ServiceLevelAgreementStatus and ServiceLevelAgreementType.",
+    "Schema and resolvers for this field already exist at HEAD~1; this PR only changes MCP operations. The MCP image copies operations and fetches schema.graphql at start, so deploy validation against the live schema succeeds. Rollback is the previous image; no migration or retained data.",
+    "Threads with neither tierId nor serviceLevelAgreementPolicyId return all-null summary without calling the tracker dataloader. The dataloader batches via getLatestServiceLevelAgreementTrackersByThreadIdsUnsafe with maxBatchSize 100, above getThreads default 10 and searchThreads default 50.",
+    "getThreads was already ineligible for the id/updatedAt fast path because it selects many node fields. Adding the summary does not change that.",
+    "A real SLA filter (non-null statuses and/or types) uses EXISTS scoped by workspace_id, ORs values inside a list, and ANDs type with status. It matches any tracker row, including a historical one, while the summary is the latest per type; getThreads documents that.",
+    "Empty slaStatuses or slaTypes arrays fail ThreadsFilter minLength(1) the same way as labelTypeIds, customerIds, and statusDetails. Null remains the ignore signal once the object is not sent.",
+    "searchThreads and getThreadDetails only add the summary field. They do not change filters, auth headers, or IP policy. No other caller imports these operation files."
+  ]
+}

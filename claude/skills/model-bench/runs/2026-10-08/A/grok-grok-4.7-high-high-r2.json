@@ -1,0 +1,29 @@
+{
+  "findings": [
+    {
+      "severity": "breaking",
+      "title": "Default getThreads calls emit a dangling AND and fail",
+      "location": "services/mcp-server/operations/getThreads.graphql:100",
+      "failure": "Every getThreads call that leaves slaStatuses and slaTypes null fails in Postgres with a syntax error, so the existing unfiltered tool and every non-SLA filter (status, assignee, customer, dates) stop returning threads. Calls that set a non-empty slaStatuses or slaTypes still run.",
+      "fix": "Pass a single nullable variable, `$serviceLevelAgreements: ServiceLevelAgreementFilter = null`, as `serviceLevelAgreements: $serviceLevelAgreements`, the same way `surveyResponse` is passed, so an unused filter stays null and `buildFilters` skips it. If the two list variables must stay inlined, change both `return sql.fragment``` ` branches in the `serviceLevelAgreements` builder to `return rdsDbUtils.filtering.ignoreFilter()` so the fragment is `1 = 1` and can be ANDed.",
+      "evidence": "The operation always sends `serviceLevelAgreements: { statuses: $slaStatuses, types: $slaTypes }` while both variables default to null (`getThreads.graphql:78-79,100-103`). `ThreadsFilter` then defaults the omitted `updatedAt` to null (`packages/core-graphql/src/threads/threadsFilter.ts:58-72`). `determineThreadFilters` spreads that object through (`packages/aggregates/src/thread/determineThreadFilters.ts:179-180`). `getThreads` builds SQL via `threadDb.getThreads` \u2192 `createFilters` \u2192 `buildBaseFilterSql` \u2192 `rdsDbUtils.filtering.buildFilters` (`packages/aggregates/src/thread/threadDb.ts:1179`, `threadDbFilterUtils.ts:833-841`). The builder returns an empty fragment when statuses, types, and updatedAt are all null (`threadDbFilterUtils.ts:943-946`). `buildFilters` keeps every non-null value (`packages/db/src/filtering.ts:114-125`); lodash `compact` only drops falsy values, and a slonik fragment token is an object. `createdAt: { after, before }` is always present and `rangeFilter` returns `1 = 1` when both bounds are null (`filtering.ts:14-31`), so `sql.join` produces ` AND 1 = 1` or `1 = 1 AND `. slonik 45.5.0 (`pnpm-lock.yaml` `slonik@45.5.0`) `sql.join` concatenates each member's `sql` with the glue and does not drop empty members. Postgres rejects the dangling AND. The EXISTS branch at `threadDbFilterUtils.ts:647-686` does skip an all-null object; `getThreads` does not use that branch. `surveyResponse`'s all-null branch returns `1=1` (`threadDbFilterUtils.ts:1156-1164`) and is bound as one nullable variable, which is why that filter survives the same join.",
+      "confidence": "high"
+    },
+    {
+      "severity": "worth-knowing",
+      "title": "getThreadDetails documents the wrong SLA __typename values",
+      "location": "services/mcp-server/operations/getThreadDetails.graphql:5",
+      "failure": "Agents that match `__typename` to `Pending`, `ImminentBreach`, `Breaching`, `Achieved`, `Breached`, or `Cancelled` will treat every live SLA target as missing. The payload uses the union member names.",
+      "fix": "Document the real type names: `ServiceLevelAgreementStatusDetailPending`, `ServiceLevelAgreementStatusDetailImminentBreach`, `ServiceLevelAgreementStatusDetailBreaching`, `ServiceLevelAgreementStatusDetailAchieved`, `ServiceLevelAgreementStatusDetailBreached`, and `ServiceLevelAgreementStatusDetailCancelled`.",
+      "evidence": "The leading `#` comment says `__typename` is those short names (`getThreadDetails.graphql:5-6`). Apollo MCP Server v1.20.0 (`services/mcp-server/Dockerfile`) uses those operation comments as the tool description. The schema union members are the long names (`packages/core-graphql/src/schema.ts:14072-14118`), and `__resolveType` returns those same strings (`packages/core-graphql/src/resolvers.ts:11918-11934`).",
+      "confidence": "high"
+    }
+  ],
+  "checked_fine": [
+    "getThreadDetails and searchThreads only add `serviceLevelAgreementStatusSummary`. Their inline fragments match `ServiceLevelAgreementStatusDetailPending` (breachingAt, pausedAt, remainingMinutesAtPause), ImminentBreach (same), Breaching (breachedAt), Achieved (achievedAt), Breached (breachedAt, completedAt), and Cancelled (cancelledAt), and the union `__resolveType` switch covers every status.",
+    "Threads with neither `tierId` nor `serviceLevelAgreementPolicyId` return four null targets without loading trackers (`resolvers.ts` `serviceLevelAgreementStatusSummary`). Threads that have a tier or policy use the existing `serviceLevelAgreementTrackerDataLoader`, which batches `getLatestServiceLevelAgreementTrackersByThreadIdsUnsafe` and does not add a permission beyond the `thread:read` check already required by `getThreads`.",
+    "Filter enum values in the getThreads comment match `ServiceLevelAgreementStatus` and `ServiceLevelAgreementType` in `schema.ts`. A set `slaStatuses`/`slaTypes` pair becomes the existing EXISTS on `service_level_agreement_trackers` (workspace-scoped, AND across dimensions, OR within a list), including historical rows; that caveat is already in the getThreads comment and matches the current DB filter.",
+    "No migration, export, env var, secret, or auth change. The GraphQL fields already exist on `Thread` and `ThreadsFilter`, so the MCP image does not depend on a schema deploy. Rollback is the previous MCP image; nothing is stored by this change.",
+    "Repo search for `slaStatuses` and `slaTypes` under `services/mcp-server` finds only the new getThreads variables, which that operation reads. No new TypeScript exports, fragments, or unused branches."
+  ]
+}

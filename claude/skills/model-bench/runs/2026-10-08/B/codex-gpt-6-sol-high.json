@@ -1,0 +1,65 @@
+{
+  "findings": [
+    {
+      "severity": "breaking",
+      "title": "Batch tenant lookup always receives an empty ID list",
+      "location": "packages/importers/src/handlers/importCustomers.ts:510",
+      "failure": "Records with nonempty tenantExternalIds are excluded from recordsWithTenantStubs, so this lookup receives no IDs. Nango customer imports omit existing tenant memberships; tenant-centric jobs skip those customers entirely. Rolling back the code does not restore records already skipped by a one-off import.",
+      "fix": "Collect external IDs from inRecords, or from records filtered for nonempty tenantExternalIds. Verify both the lookup count and resulting memberships.",
+      "evidence": "Lines 484–487 select only records whose tenantExternalIds are absent or empty; lines 510–512 read IDs from that selection. HEAD~1 looked up each record’s IDs directly. The existing membership assertion at importCustomers.tenants.litest.ts:152 and the new lookup assertion at :202 both contradict the new path.",
+      "confidence": "high"
+    },
+    {
+      "severity": "regression",
+      "title": "Single-customer imports no longer look up existing tenants",
+      "location": "packages/importers/src/handlers/importCustomers.ts:327",
+      "failure": "When tenantsByExternalId is omitted, importCustomer substitutes an empty map and silently omits tenant memberships. Thread, message-author, and embedded-customer imports call importCustomer without that map.",
+      "fix": "When no map is supplied, retain the previous aggregate lookup and return its error through scope.fail.",
+      "evidence": "Direct callers in importThreads.ts:140, importThreadMessage.ts:150, and importAllCustomersAndUsersInRecords.ts:59 pass only record. HEAD~1 importCustomers.ts:301–307 queried getTenantsFromIdentifiers for these records.",
+      "confidence": "high"
+    },
+    {
+      "severity": "regression",
+      "title": "A failed tenant lookup becomes a successful partial import",
+      "location": "packages/importers/src/handlers/importCustomers.ts:282",
+      "failure": "Once the batch receives actual IDs, a permission or database lookup error is logged and skipped. The import then treats those tenants as missing, omitting memberships or skipping tenant-centric customers while reporting success.",
+      "fix": "Return Result.err(lookupResult.error) from the helper and let importCustomers return the failure.",
+      "evidence": "The new helper uses continue on isErr and unconditionally returns Result.ok at line 290. HEAD~1 importCustomer returned scope.fail on the same lookup error at lines 304–305.",
+      "confidence": "high"
+    },
+    {
+      "severity": "regression",
+      "title": "The no-op fast path drops import-job attribution updates",
+      "location": "packages/aggregates/src/customers/customerAggregate.ts:660",
+      "failure": "An otherwise unchanged customer imported under a new job returns NOOP before importedByJobDefinitionId is updated. The stored customer remains attributed to the old job or null.",
+      "fix": "Pass importedByJobDefinitionId to shouldPerformCustomerUpsertUpdate in the fast path, and cover an unchanged customer whose job definition changes.",
+      "evidence": "The transactional path passes the field at customerAggregate.ts:1025–1033 and writes it at :1060–1062. shouldPerformCustomerUpsertUpdate.ts:16–21 explicitly treats a changed job ID as an update; its tests at :105–111 cover that case. Nango passes the job ID at handleImportSyncMessage.ts:173–175.",
+      "confidence": "high"
+    },
+    {
+      "severity": "dead-code",
+      "title": "The new batch error branch is unreachable",
+      "location": "packages/importers/src/handlers/importCustomers.ts:514",
+      "failure": "The isErr branch cannot execute because getTenantsByExternalId returns Result.ok on every completed path, including failed lookups.",
+      "fix": "Propagate lookup errors from the helper so this branch handles them.",
+      "evidence": "The helper’s only return is Result.ok at line 290. A tracked-code search, `git grep -n 'getTenantsByExternalId' HEAD -- packages services lambdas infra terraform migrations testing test`, found only its definition and this call.",
+      "confidence": "high"
+    },
+    {
+      "severity": "refactor",
+      "title": "Use a structured field in the new error log",
+      "location": "packages/aggregates/src/customers/customerAggregate.ts:651",
+      "failure": "The new log interpolates identifier.type with %s, departing from this repository’s required structured logging pattern.",
+      "fix": "Log `{ err: existingCustomerResult.error, identifierType: identifier.type }` with a fixed message.",
+      "evidence": "The supplied AGENTS.md Logging section requires structured logs and says never to use %s interpolation. The new call passes identifier.type as a format argument at lines 651–655.",
+      "confidence": "high"
+    }
+  ],
+  "checked_fine": [
+    "Deploy: the diff changes no infrastructure, migrations, environment variables, permissions, or exports.",
+    "Contract: no route, event schema, or public upsert signature changes; email and company updates still enter the existing transactional path.",
+    "Data and rollback: no delete, retention, or schema one-way door was added; missed imports and attribution need replay or repair after a rollback.",
+    "Operability and blast radius: no redeploy trigger or shared constant changed; shared upsert callers were traced, with the job-attribution regression reported above.",
+    "Review used only local HEAD and HEAD~1 code. No network calls, file edits, or tests were run."
+  ]
+}

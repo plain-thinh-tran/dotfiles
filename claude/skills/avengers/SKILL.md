@@ -1,11 +1,11 @@
 ---
 name: avengers
-description: Build a change with a council (Claude Opus 5.5 as chair, Codex Sol, Cursor Grok) that meets at the start of design and again to review the finished code, while Sonnet 5.5 subagents do the bounded research, coding and testing. Use when the user says /avengers, "assemble the council", or wants Opus to orchestrate a codebase heavy change with cross model design and review.
+description: Build a change with a council (Claude Opus 5.5 as chair, Codex Sol, Cursor Grok) that meets at the start of design and again to review the finished code, while Haiku 5.5 scouts map the code and Sonnet 5.5 subagents do the coding and testing. Use when the user says /avengers, "assemble the council", or wants Opus to orchestrate a codebase heavy change with cross model design and review.
 ---
 
 # Avengers
 
-Opus 5.5 is the advisor: orchestrator, architect, council chair and final judge. Sonnet 5.5 subagents are the workers. The council is Opus 5.5, Codex Sol and Cursor Grok 4.7; it meets twice, once when design starts and once when the code is done.
+Opus 5.5 is the advisor: orchestrator, architect, council chair and final judge. Sonnet 5.5 subagents are the workers. The council is Opus 5.5, Codex Sol and Cursor Grok 4.6; it meets twice, once when design starts and once when the code is done.
 
 If you are not running on Opus 5.5, tell the user and stop.
 
@@ -14,6 +14,7 @@ If you are not running on Opus 5.5, tell the user and stop.
 - Opus (you): frames the work, writes the brief, chairs both meetings, writes the design, specs work packets, integrates, decides every disagreement, reports to the user.
 - Council members (Codex Sol, Cursor Grok): read only advisers. They propose and attack designs and review code. They never edit. `council.sh` runs both in parallel.
 - Workers (Sonnet 5.5): the Agent tool with `model: "sonnet"`. They execute packets you fully specced; they do not make design calls.
+- Scouts (Haiku 5.5): the Agent tool with `model: "haiku"`. Read only lookups that return file:line evidence.
 
 ## Meeting Directory
 
@@ -21,7 +22,7 @@ Each run lives in `.context/avengers/<slug>/` inside the target repo. Every meet
 
 ## Steps
 
-1. **Scout.** If the change touches code you have not read, send Sonnet workers to map it in parallel (callers, consumers, tests, sibling patterns), each returning file:line evidence only. Done when you can name every surface the change touches.
+1. **Scout.** If the change touches code you have not read, send Haiku scouts to map it in parallel (callers, consumers, tests, sibling patterns), each returning file:line evidence only. Done when you can name every surface the change touches.
 2. **Brief.** Write `brief.md`: goal, constraints, surfaces in scope and out of scope, the scout evidence, open questions. Done when a member with no chat context could design from it.
 3. **Design meeting.**
    1. Start `~/.claude/skills/avengers/council.sh design <dir>` with `run_in_background`.
@@ -47,11 +48,13 @@ Each run lives in `.context/avengers/<slug>/` inside the target repo. Every meet
    4. Hand accepted fixes to Sonnet workers as packets, vet them, and rerun the review meeting once if the fixes changed behaviour. Stop after the second meeting; anything still open goes to the user.
 7. **Report.** Lead with what shipped and whether the council signed off. Then: split decisions from design and review, findings rejected and why, tests run, anything left open. Link `design.md` and `review.md`.
 
+Model choices for every seat come from the benchmark in `~/.claude/skills/model-bench/results.md`; rerun `/model-bench` when a new model ships.
+
 ## Council Failures
 
 `council.sh` prints each member's output path or a FAILED line with its log tail. If one member fails, rerun once; if it fails again, hold the meeting with whoever answered and say in the report which seat was empty. If both fail, stop and show the user the logs. A missing Cursor CLI installs with `curl https://cursor.com/install -fsS | bash`.
 
-Models default to `gpt-6-sol` (Codex, needs codex CLI 0.159 or newer; `brew upgrade codex`) and `grok-4.7-high` (Cursor, needs `CURSOR_API_KEY`; list ids with `cursor-agent models`). Override with `CODEX_MODEL`, `CODEX_EFFORT` and `CURSOR_MODEL`.
+Models default to `gpt-6-sol` (Codex, needs codex CLI 0.159 or newer; `brew upgrade codex`) and `cursor-grok-4.6-medium` (Cursor, needs `CURSOR_API_KEY`; list ids with `cursor-agent models`). Override with `CODEX_MODEL`, `CODEX_EFFORT` and `CURSOR_MODEL`.
 
 ## Benchmark Mode
 

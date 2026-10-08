@@ -1,0 +1,103 @@
+{
+  "upsertCustomer": [
+    {
+      "location": "lambdas/ms-teams-webhook-handler/src/handleWebhookPayload.ts:602",
+      "email": "no",
+      "companyId": "no"
+    },
+    {
+      "location": "lambdas/help-center-api/src/resolveCustomerFromJwt.ts:19",
+      "email": "no",
+      "companyId": "no"
+    },
+    {
+      "location": "lambdas/chat-api/src/utils.ts:315",
+      "email": "no",
+      "companyId": "no"
+    },
+    {
+      "location": "lambdas/chat-api/src/utils.ts:351",
+      "email": "no",
+      "companyId": "no"
+    },
+    {
+      "location": "lambdas/discord-webhook-handler/src/handleDiscordWebhookPayload.ts:660",
+      "email": "no",
+      "companyId": "no"
+    },
+    {
+      "location": "packages/demo-workspaces/src/createDemoData.ts:251",
+      "email": "no",
+      "companyId": "no"
+    },
+    {
+      "location": "packages/importers/src/handlers/importCustomers.ts:406",
+      "email": "no",
+      "companyId": "no"
+    },
+    {
+      "location": "packages/aggregates/src/ms-teams/msTeamsAggregate.ts:1978",
+      "email": "no",
+      "companyId": "no"
+    },
+    {
+      "location": "packages/aggregates/src/ms-teams/msTeamsUtils.ts:861",
+      "email": "no",
+      "companyId": "no"
+    },
+    {
+      "location": "packages/aggregates/src/ms-teams/msTeamsUtils.ts:1375",
+      "email": "no",
+      "companyId": "no"
+    },
+    {
+      "location": "packages/aggregates/src/demo-channel/demoChannelAggregate.ts:19",
+      "email": "no",
+      "companyId": "no"
+    },
+    {
+      "location": "packages/aggregates/src/slack/slackAggregate.ts:3192",
+      "email": "no",
+      "companyId": "yes"
+    },
+    {
+      "location": "packages/aggregates/src/slack/slackAggregate.ts:3276",
+      "email": "no",
+      "companyId": "no"
+    },
+    {
+      "location": "packages/aggregates/src/email/emailAggregate/resolveEmailActor.ts:121",
+      "email": "no",
+      "companyId": "no"
+    },
+    {
+      "location": "packages/aggregates/src/email/emailAggregate/handleUserEmail.ts:116",
+      "email": "no",
+      "companyId": "no"
+    },
+    {
+      "location": "packages/core-graphql/src/customers/upsertCustomer/upsertCustomerMutation.ts:27",
+      "email": "yes",
+      "companyId": "no"
+    }
+  ],
+  "getTenantsFromIdentifiers": [
+    "lambdas/chat-api/src/resolveChatTenant.ts:30",
+    "packages/importers/src/handlers/importCustomers.ts:279",
+    "packages/importers/src/handlers/importTenants.ts:428",
+    "packages/aggregates/src/customers/customerAggregate.ts:129",
+    "packages/aggregates/src/customers/customerAggregate.ts:1507",
+    "packages/aggregates/src/customers/customerAggregate.ts:1730",
+    "packages/aggregates/src/customers/customerAggregate.ts:1873",
+    "packages/aggregates/src/metrics/resolveThreadMetricFilterIdentifiers.ts:167",
+    "packages/aggregates/src/slack/slackAggregate.ts:5044",
+    "packages/aggregates/src/thread-channel-associations/threadChannelAssociationAggregate.ts:393",
+    "packages/aggregates/src/thread/determineThreadFilters.ts:87",
+    "packages/aggregates/src/thread/threadAggregate.ts:800",
+    "packages/aggregates/src/thread/threadAggregate.ts:5589",
+    "packages/core-graphql/src/tiers/updateTenantTier.ts:38",
+    "packages/core-graphql/src/tenants/deleteTenantMutation.ts:31",
+    "packages/core-graphql/src/tenant-fields/upsertTenantFieldMutation.ts:177",
+    "packages/slack-ingestion/src/handleSlackWebhookForSlackTeam.ts:2498"
+  ]
+}

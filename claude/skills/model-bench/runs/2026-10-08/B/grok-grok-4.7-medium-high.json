@@ -1,0 +1,38 @@
+{
+  "findings": [
+    {
+      "severity": "breaking",
+      "title": "Batch tenant lookup is always empty, so CRM customers lose tenant links",
+      "location": "packages/importers/src/handlers/importCustomers.ts:325-331 and :484-542",
+      "failure": "HubSpot, Salesforce, and Attio customer syncs (tenants: [] plus tenantExternalIds) no longer link customers to existing tenants. importCustomers builds the map from recordsWithTenantStubs, the records that have no tenantExternalIds, so getTenantsByExternalId is always called with []. lodash chunk of an empty array performs no queries. importCustomers still passes that empty map into every importCustomer, and a missing map key is treated as \"tenant does not exist\". Tenant-centric jobs (entityTypes includes TENANTS) then skip the customer entirely (\"None of the tenantExternalIds exist in our database\") even when the tenant row exists, so the customer is not created or updated. Other jobs still upsert the customer but importCustomerTenantMemberships is never called. Direct callers that omit the map hit the same empty map: importThreads.ts:140, importThreadMessage.ts:150, and importAllCustomersAndUsersInRecords.ts:59. The previous importCustomer always called tenantAggregate.getTenantsFromIdentifiers and failed the record on error.",
+      "fix": "Collect external ids from records that have a non-empty tenantExternalIds (inRecords, not recordsWithTenantStubs). When tenantsByExternalId is omitted, keep the old per-record getTenantsFromIdentifiers call and scope.fail on error.",
+      "evidence": "Filter at importCustomers.ts:484-487 keeps only records whose tenantExternalIds is undefined or length 0; line 512 flatMaps those ids. importCustomer.ts:327-331 uses args.tenantsByExternalId ?? new Map() and does not query. Skip path is lines 333-351. nango-sync-handler handleImportSyncMessage.ts:173 calls importCustomers. Mappers set tenantExternalIds and tenants: [] in packages/importers/src/adapters/hubspot/mappers/toCustomer.ts:32, salesforce/mappers/toCustomer.ts:27, attio/mappers/toCustomer.ts:24. getTenantsByIdentifiers (tenantDb.ts:249-266) is the query that used to run and has no LIMIT. lodash chunk returns [] when the input length is 0, so the new loop never calls getTenantsFromIdentifiers.",
+      "confidence": "high"
+    },
+    {
+      "severity": "regression",
+      "title": "Failed tenant chunk is treated as missing tenants",
+      "location": "packages/importers/src/handlers/importCustomers.ts:273-291 and :514-516",
+      "failure": "getTenantsByExternalId logs a lookup error and continues, then always returns Result.ok with a partial map. importCustomer treats every external id absent from that map as a tenant that does not exist: tenant-centric imports skip the customer, other imports omit memberships, and the batch still succeeds. The isErr return at lines 514-516 never runs. The previous per-customer lookup returned the error via scope.fail. A transient getTenantsFromIdentifiers failure therefore drops links instead of failing the import. Repo search for getTenantsByExternalId shows this is the only definition and the only caller.",
+      "fix": "Return Result.err from getTenantsByExternalId on lookup failure so the existing check at lines 514-516 fails the batch. Do not continue.",
+      "evidence": "Lines 282-285 warn and continue; line 290 returns Result.ok. Diff removes the old lookupResult.isErr -> scope.fail path. AGENTS.md requires every Result error to be returned to the caller; logging and continuing is not enough. getTenantsFromIdentifiers (tenantAggregate.ts:523-525) already maps DB errors to DomainError.internalDatabaseError.",
+      "confidence": "high"
+    },
+    {
+      "severity": "regression",
+      "title": "NOOP fast path drops importedByJobDefinitionId updates",
+      "location": "packages/aggregates/src/customers/customerAggregate.ts:645-664",
+      "failure": "Repeat CRM syncs of an existing customer pass onUpdate: {} and importedByJobDefinitionId. The fast path treats email and company as absent, then calls shouldPerformCustomerUpsertUpdate without the job id. Empty onUpdate returns false before the job-id check, so upsertCustomer returns NOOP and never opens the transaction. imported_by_job_definition_id stays null or stuck on the previous job, and domain.customer.customer_changed UPDATED is not published. Create still stamps the id. The only production caller that passes the argument is importCustomer (importCustomers.ts:406-414), fed by handleImportSyncMessage.ts:173-174. updateCustomerUnsafe still passes the id and would have written it.",
+      "fix": "Pass importedByJobDefinitionId into shouldPerformCustomerUpsertUpdate on the fast path, the same way updateCustomerUnsafe does at lines 1026-1032.",
+      "evidence": "shouldPerformCustomerUpsertUpdate.ts:16-25 returns true when the third argument is a non-empty string different from customer.importedByJobDefinitionId, and that check runs before isEmpty(onUpdate). shouldPerformCustomerUpsertUpdate.test.ts:105-111 locks that in for empty onUpdate. parseImportCustomer sets onUpdate: {} at importCustomers.ts:240. customerDb.ts:951-953 writes the column only from updateCustomerUnsafe, which the fast path skips. GraphQL upsertCustomerMutation.ts does not pass the argument, so this is the CRM import path.",
+      "confidence": "high"
+    }
+  ],
+  "checked_fine": [
+    "No infra, migration, export, env, or secret change, so deploy ordering and rollback of schema are unchanged. Reverting the commit restores per-customer tenant lookup and job-id stamps; skipped rows and missing memberships are not deletes and a later successful sync can write them.",
+    "Email and companyId updates still skip the fast path and keep company resolution inside updateCustomerUnsafe. selectForUpdate stays false, matching the existing unlocked upsert.",
+    "Field NOOP decisions for callers that do not pass importedByJobDefinitionId (GraphQL, Slack, Teams, email, chat, Discord) still use shouldPerformCustomerUpsertUpdate. Permission check still runs before the fast path. Create-if-missing still enters the transaction.",
+    "getTenantsByIdentifiers has no LIMIT, so a 500-id chunk is not truncated. Tenant.externalId is a required non-empty string, so map keys match lookup ids. uniq of external ids does not change the membership set.",
+    "Customer and tenant nested-stub import (records with tenants[] and no tenantExternalIds) still goes through importTenants and preSyncedTenants. GraphQL and event schemas are unchanged."
+  ]
+}

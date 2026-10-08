@@ -1,0 +1,52 @@
+{
+  "findings": [
+    {
+      "severity": "regression",
+      "title": "Batch tenant lookup always receives an empty ID list",
+      "location": "packages/importers/src/handlers/importCustomers.ts:510-512",
+      "failure": "recordsWithTenantStubs explicitly excludes records with nonempty tenantExternalIds. Flattening its external IDs therefore always produces []. HubSpot, Salesforce and Attio customers with account references consequently lose membership creation; tenant-centric imports skip those customers entirely and record successful skips.",
+      "fix": "Collect IDs from inRecords. Verify existing-account membership and tenant-centric import cases. If deployed, affected completed batches need a fresh import; rolling back code alone will not repair them.",
+      "evidence": "The filter at lines 485-487 guarantees an empty lookup input. Lines 327-350 interpret the empty map as nonexistent tenants. The three CRM toCustomer mappers populate tenantExternalIds. HEAD~1 performed the lookup per customer. handleImportSyncMessage.ts:551 records skipped progress as completed, and its batch-start guard skips terminal batches. The added importCustomers.tenants.litest.ts:164 test expects a lookup that this implementation cannot execute.",
+      "confidence": "high"
+    },
+    {
+      "severity": "regression",
+      "title": "Single-customer imports no longer resolve tenant references",
+      "location": "packages/importers/src/handlers/importCustomers.ts:325-330",
+      "failure": "When tenantsByExternalId is omitted, the implementation substitutes an empty map instead of querying tenants. Existing single-record callers therefore silently omit memberships for customers carrying tenantExternalIds. Correcting the batch ID selection does not fix these callers.",
+      "fix": "When the optional map is absent, resolve the record's tenantExternalIds through the aggregate and propagate lookup errors through scope.fail. Add coverage for importCustomer without a supplied map.",
+      "evidence": "HEAD~1 queried tenantAggregate.getTenantsFromIdentifiers here. Repository-wide git grep for importCustomer calls identifies unchanged callers without a map in importAllCustomersAndUsersInRecords.ts:59, importThreads.ts:140 and importThreadMessage.ts:150. Membership creation at importCustomers.ts:442 only runs when tenantsToLink is nonempty.",
+      "confidence": "high"
+    },
+    {
+      "severity": "regression",
+      "title": "The NOOP shortcut drops import-job attribution updates",
+      "location": "packages/aggregates/src/customers/customerAggregate.ts:658-663",
+      "failure": "An existing customer with null or different importedByJobDefinitionId returns NOOP when other fields match. CRM imports always supply an empty onUpdate, so they stop updating this stored attribution, omit the customer-changed event, and count the required update as skipped.",
+      "fix": "Pass importedByJobDefinitionId as the comparison helper's third argument. Cover attribution-only updates from both null and a different job ID in the aggregate litest.",
+      "evidence": "shouldPerformCustomerUpsertUpdate.ts:16-21 explicitly treats changed attribution as an update. The existing transactional call at customerAggregate.ts:1026-1032 passes it, and lines 1060-1062 persist it. The new call omits it. importCustomers.ts:240 supplies onUpdate: {}, while lines 406-414 forward the job ID. Existing helper tests at shouldPerformCustomerUpsertUpdate.test.ts:105-116 already establish this contract.",
+      "confidence": "high"
+    },
+    {
+      "severity": "refactor",
+      "title": "Propagate failed tenant lookups instead of returning partial success",
+      "location": "packages/importers/src/handlers/importCustomers.ts:282-290",
+      "failure": "The helper logs failed chunks, continues, and unconditionally returns Result.ok. Its caller's new isErr branch is therefore unreachable. Once the empty-input bug is corrected, a database or permission failure will masquerade as missing tenants, causing skipped customers or incomplete memberships instead of an import failure.",
+      "fix": "Return Result.err(lookupResult.error) on the first failed chunk, following the existing Result propagation pattern. Only return a tenant map after all chunks succeed.",
+      "evidence": "tenantAggregate.getTenantsFromIdentifiers propagates permission and database errors. HEAD~1 importCustomer forwarded those errors through scope.fail. AGENTS.md explicitly requires returning or throwing failed Results rather than logging and continuing. Repository-wide git grep for getTenantsByExternalId and tenantsByExternalId confirms the sole helper/caller pair; the helper has no Result.err return, making lines 514-515 dead.",
+      "confidence": "high"
+    }
+  ],
+  "checked_fine": [
+    "Deploy: all four changed files are application logic or local tests; no infrastructure, resource identities, exports, deployment ordering, environment variables, secrets or dependency versions change.",
+    "Contract: routes, authentication, public schemas and event versions remain unchanged. Email/company updates retain their existing resolution path; customer create/edit permissions still precede the shortcut.",
+    "Data: no deletes, retention reductions or migrations are introduced. Tenant membership synchronization remains additive; the findings concern omitted writes.",
+    "Silent regression: HEAD~1 already used selectForUpdate: false, so removal of row locking is not a new regression. Genuine NOOPs already omitted customer-change events.",
+    "Operability: no deployment-trigger or duplicated configuration changes; successful skips concealing incomplete imports are covered by the findings.",
+    "Rollback: HEAD~1 can read the unchanged stored/event schemas; no schema one-way door exists. Completed affected imports require replay as noted above.",
+    "Blast radius: the upsert optimization also reaches GraphQL, chat, email, Slack and help-center callers. Creation and actual field changes still follow the transactional path; attribution is the identified comparison mismatch.",
+    "Dead code: repository-wide symbol searches found no additional orphaned changed exports or test helpers. The unreachable lookup loop and error guard are covered above.",
+    "Design: aggregate boundaries and the shared shouldPerformCustomerUpsertUpdate helper are preserved; the Result propagation departure is reported above.",
+    "Validation limit: both changed litests were inspected, but tests and typechecking were not run because node_modules is absent and this review permits neither writes nor network access."
+  ]
+}

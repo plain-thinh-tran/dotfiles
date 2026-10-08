@@ -1,0 +1,52 @@
+{
+  "findings": [
+    {
+      "severity": "worth-knowing",
+      "title": "MCP list/search calls add batched SLA tracker reads on core GraphQL",
+      "location": "services/mcp-server/operations/getThreads.graphql, searchThreads.graphql; packages/core-graphql/src/resolvers.ts (serviceLevelAgreementStatusSummary); packages/core-graphql/src/coreGraphqlDataloader.ts (createServiceLevelAgreementTrackerDataLoader)",
+      "failure": "Every getThreads (default first: 10) and searchThreads (default first: 50) invocation now resolves serviceLevelAgreementStatusSummary per thread, which batches to getLatestServiceLevelAgreementTrackersByThreadIdsUnsafe against service_level_agreement_trackers. Under heavy MCP traffic this adds DB read load and response size on core-graphql-api compared to HEAD~1, which could contribute to latency or timeouts on the 25s WEB lambda / 30s API Gateway cap.",
+      "fix": "Monitor core-graphql-api latency and DB load after MCP deploy; if hot, consider narrowing default selections, lowering searchThreads page size in tool docs, or a product decision to omit summary on high-volume list tools.",
+      "evidence": "HEAD~1 operations omitted serviceLevelAgreementStatusSummary; resolver calls serviceLevelAgreementTrackerDataLoader when tierId or serviceLevelAgreementPolicyId is set (packages/core-graphql/src/resolvers.ts ~7761\u20137776); dataloader uses DISTINCT ON latest trackers query (serviceLevelAgreementTrackerDb.ts ~151\u2013155). searchThreads still defaults first: 50.",
+      "confidence": "medium"
+    },
+    {
+      "severity": "worth-knowing",
+      "title": "SLA filter matches any historical tracker row; summary is newest per type",
+      "location": "services/mcp-server/operations/getThreads.graphql (comments + slaStatuses/slaTypes); packages/aggregates/src/thread/threadDbFilterUtils.ts (~646\u2013684); packages/aggregates/src/service-level-agreement/serviceLevelAgreementTrackerDb.ts (~151\u2013155)",
+      "failure": "An agent filtering slaStatuses: [BREACHED] can receive threads whose serviceLevelAgreementStatusSummary shows PENDING (or another status) on a target, because EXISTS matches any tracker row while summary uses latest created_at per (thread_id, type). Agents may mis-rank urgency or give wrong answers despite technically correct API behavior.",
+      "fix": "No code change required if intentional; ensure tool descriptions stay prominent (already partially documented). Optionally add a short example in getThreads comments showing summary vs filter divergence.",
+      "evidence": "Filter uses EXISTS on service_level_agreement_trackers without \u201clatest only\u201d (threadDbFilterUtils.ts). Summary uses getLatestServiceLevelAgreementTrackersByThreadIds with ORDER BY created_at DESC DISTINCT ON type (serviceLevelAgreementTrackerDb.ts). PR summary.md and getThreads.graphql header describe the same caveat.",
+      "confidence": "high"
+    },
+    {
+      "severity": "worth-knowing",
+      "title": "searchThreads exposes SLA summary but not SLA filters",
+      "location": "services/mcp-server/operations/searchThreads.graphql",
+      "failure": "Agents using searchThreads for text search cannot narrow by slaStatuses/slaTypes (only getThreads can). Workflows like \u201csearch title X and show breaching SLAs\u201d require a two-step getThreads filter or accept unfiltered SLA noise in search results.",
+      "fix": "If product wants parity, add optional slaStatuses/slaTypes variables to searchThreads filters the same way as getThreads; otherwise document in searchThreads header that SLA filtering requires getThreads.",
+      "evidence": "diff.patch adds serviceLevelAgreementStatusSummary to searchThreads only; getThreads.graphql adds $slaStatuses/$slaTypes and filters.serviceLevelAgreements. Grep serviceLevelAgreements under services/mcp-server/operations hits only getThreads.graphql.",
+      "confidence": "high"
+    },
+    {
+      "severity": "refactor",
+      "title": "Duplicate SLA status selection set (~180 lines \u00d7 3 files)",
+      "location": "services/mcp-server/operations/getThreadDetails.graphql, getThreads.graphql, searchThreads.graphql",
+      "failure": "Future field additions (e.g. new status detail fields) require three identical edits; one missed file causes MCP tools to return inconsistent SLA shapes across tools.",
+      "fix": "Add a shared GraphQL fragment file under services/mcp-server/operations/ (validateMcpOperations.ts merges all .graphql definitions into one document) mirroring lambdas/agent-sandbox-api/src/proxy/services/plain/fragments.ts SLA_FRAGMENT pattern, extended to firstResolutionTime and totalResolutionTime.",
+      "evidence": "diff.patch repeats the same serviceLevelAgreementStatusSummary selection in three operations. Grep for fragment in services/mcp-server: no matches. agent-sandbox-api already centralizes SLA_FRAGMENT in fragments.ts.",
+      "confidence": "high"
+    }
+  ],
+  "checked_fine": [
+    "Deploy: diff touches only services/mcp-server/operations/*.graphql; Dockerfile copies operations into image; no migrations, SST/OpenTofu resource, env var, or permission changes in diff.",
+    "Contract: additive GraphQL selections and optional getThreads variables; routes/auth unchanged; core schema already defines serviceLevelAgreementStatusSummary and ServiceLevelAgreementFilter (packages/core-graphql/src/schema.ts).",
+    "Default getThreads SLA filters: inline serviceLevelAgreements { statuses: null, types: null } does not add SQL when both are null (threadDbFilterUtils.ts inner guard at types/statuses/updatedAt); parity with omitting filter when variables unset.",
+    "Contract validation: lint:mcpGraphql runs validateMcpOperations.ts against @team-plain/core-graphql schema (package.json lint script).",
+    "Data / rollback: no stored schema or migration changes; rolling back MCP image restores prior tool responses only (one-way door none).",
+    "Blast radius: no shared TS constants or aggregate changes in diff; behavior change limited to MCP operation documents.",
+    "Resolver parity: serviceLevelAgreementStatusSummary uses existing dataloader and union resolvers (resolvers.ts ~7761\u20137776, ~9433\u20139457); threads without tier and policy return all-null without DB load.",
+    "Dead code: repo search for serviceLevelAgreementStatusSummary under services/mcp-server shows three operation usages only; no new unreachable exports in diff.",
+    "Silent regression (deploy triggers): mcp-server ECS image rebuild picks up operation file changes via fromAsset(services/mcp-server).",
+    "Operability (core API): no duplicated infra values introduced by this PR."
+  ]
+}

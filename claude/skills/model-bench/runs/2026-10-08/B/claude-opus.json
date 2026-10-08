@@ -1,0 +1,67 @@
+{
+  "findings": [
+    {
+      "severity": "breaking",
+      "title": "Batch tenant map is built from the records that have no tenantExternalIds, so it is always empty",
+      "location": "packages/importers/src/handlers/importCustomers.ts:512",
+      "failure": "recordsWithTenantStubs (line 485) is defined as the records whose tenantExternalIds is undefined or empty. getTenantsByExternalId(ctx, recordsWithTenantStubs.flatMap((r) => r.tenantExternalIds ?? [])) therefore always gets [], runs zero queries and returns an empty Map. In importCustomer (lines 327-331) every tenantExternalId misses the map, so tenantsToLink = []. HubSpot (adapters/hubspot/mappers/toCustomer.ts:21), Salesforce (salesforce/mappers/toCustomer.ts:16) and Attio (attio/mappers/toCustomer.ts:24) contacts reach this code through nango-sync-handler handleImportSyncMessage.ts:173. With TENANTS in the job definition (shouldSkipTenantlessCustomers true, line 334), every one of those contacts is recorded as skipped with 'None of the tenantExternalIds exist in our database' and never created or updated. Without TENANTS they import with no tenant memberships (line 409 guard). These are recorded as skips, not failures, so nothing retries. Incremental syncs will not send unchanged contacts again, and rolling back does not repair the data; a full resync is needed.",
+      "fix": "Collect ids from inRecords (or from inRecords filtered to records with tenantExternalIds), not from recordsWithTenantStubs: getTenantsByExternalId(ctx, inRecords.flatMap((r) => r.tenantExternalIds ?? [])).",
+      "evidence": "importCustomers.ts:485-487 filter `r.tenantExternalIds === undefined || r.tenantExternalIds.length === 0`; :510-513 flatMap over that same filtered list. The PR's own test (importCustomers.tenants.litest.ts:202 expects 1 externalId lookup, :216 expects memberships), along with the existing tests at :152, :348 and :376, cannot pass against this code. The CI result for this PR needs checking.",
+      "confidence": "high"
+    },
+    {
+      "severity": "breaking",
+      "title": "Single record callers lost the tenantExternalIds lookup; the PR's fallback claim is false",
+      "location": "packages/importers/src/handlers/importCustomers.ts:327",
+      "failure": "When no map is passed, importCustomer now uses `args.tenantsByExternalId ?? new Map()`, so the per customer getTenantsFromIdentifiers call is gone entirely. importThreads.ts:140, importThreadMessage.ts:150 and importAllCustomersAndUsersInRecords.ts:59 call importCustomer({ record }) without a map. Any record with tenantExternalIds then gets no tenant links. The PR description says 'Single-record import still falls back to per-customer lookup when no map is supplied'; the code has no such fallback.",
+      "fix": "When args.tenantsByExternalId is undefined, call getTenantsByExternalId(ctx, nangoCustomer.tenantExternalIds) (or the old tenantAggregate.getTenantsFromIdentifiers) and scope.fail on error, as HEAD~1 did.",
+      "evidence": "HEAD~1 importCustomer called tenantAggregate.getTenantsFromIdentifiers unconditionally for tenantExternalIds; HEAD importCustomers.ts:327 replaces it with an empty Map default. The input comment at :302 ('a missing key means no such tenant exists') turns an omitted map into 'no tenants exist'.",
+      "confidence": "high"
+    },
+    {
+      "severity": "regression",
+      "title": "Tenant lookup errors are swallowed; previously the import failed and retried",
+      "location": "packages/importers/src/handlers/importCustomers.ts:283",
+      "failure": "If a chunk's getTenantsFromIdentifiers fails (DB timeout, tenant:read permission denial), getTenantsByExternalId only logs a warning, continues and still returns Result.ok. Those tenants are missing from the map, so the affected customers are skipped as tenantless (line 346) or imported with no tenant links, and the batch is reported as successful. On HEAD~1, lookupResult.isErr → scope.fail → importCustomers returned Result.err → handleImportSyncMessage.ts:177 failed the message so it was retried. A transient DB error now silently drops data for up to 500 tenants' worth of customers.",
+      "fix": "Return Result.err(lookupResult.error) from getTenantsByExternalId on a chunk failure (the caller at :515 already handles that).",
+      "evidence": "importCustomers.ts:280-286 `if (lookupResult.isErr) { ctx.log.warn(...); continue; }` and :289 `return Result.ok(tenantsByExternalId)`; HEAD~1 had `if (lookupResult.isErr) { return scope.fail(ctx, lookupResult.error); }`.",
+      "confidence": "high"
+    },
+    {
+      "severity": "regression",
+      "title": "NOOP fast path ignores importedByJobDefinitionId, so imports no longer stamp existing customers",
+      "location": "packages/aggregates/src/customers/customerAggregate.ts:660",
+      "failure": "The fast path calls shouldPerformCustomerUpsertUpdate(existing, onUpdate) without the third argument. Import upserts always send onUpdate {} (importCustomers.ts:239), so isEmpty returns false and the result is NOOP. The transactional path (updateCustomerUnsafe, customerAggregate.ts:1026-1033) passes importedByJobDefinitionId, which returns true when it differs from customer.importedByJobDefinitionId, and then writes imported_by_job_definition_id (:1060) and publishes domain.customer.customer_changed. After this PR, a customer that already exists (created manually, by thread import, or by an older job definition) is never attributed to the current import job, and no customer_changed event is emitted. The fast path catches every nango import upsert, so this hits all CRM syncs.",
+      "fix": "Pass importedByJobDefinitionId into the fast path check: shouldPerformCustomerUpsertUpdate(existing, onUpdate, importedByJobDefinitionId). Add a test that an existing customer with a different importedByJobDefinitionId returns UPDATED.",
+      "evidence": "customerAggregate.ts:658-661 vs :1026-1033; shouldPerformCustomerUpsertUpdate.ts:16-21 makes the job id check the first short circuit. The new tests (customerAggregate.litest.ts) never pass importedByJobDefinitionId, so they miss this.",
+      "confidence": "high"
+    },
+    {
+      "severity": "dead-code",
+      "title": "getTenantsByExternalId can never return an error, so the isErr branch is dead",
+      "location": "packages/importers/src/handlers/importCustomers.ts:515",
+      "failure": "getTenantsByExternalId's only return is Result.ok (line 289), so `if (tenantsByExternalIdResult.isErr) return Result.err(...)` can never run. The Result signature makes the error path look handled when it is not (see the swallowed error finding).",
+      "fix": "Make getTenantsByExternalId propagate chunk errors, which gives this branch a purpose; otherwise return a plain Map and drop the branch.",
+      "evidence": "importCustomers.ts:273-290 contains no Result.err; a repo wide search finds getTenantsByExternalId only at :273 and :510.",
+      "confidence": "high"
+    },
+    {
+      "severity": "worth-knowing",
+      "title": "Creates and real updates without email or company now cost an extra SELECT",
+      "location": "packages/aggregates/src/customers/customerAggregate.ts:643",
+      "failure": "When the customer does not exist, or an update is needed, the fast path SELECT runs and then the transaction repeats the same getCustomerByIdentifier (:668). On a first sync (all creates) or a sync with many real changes, the customers SELECT load roughly doubles on the writer, which goes against the PR's load reduction goal. The comment's wording 'only email or only company' also does not match the condition, which bypasses on any update containing email or companyId.",
+      "fix": "Accept the extra query knowingly, or pass the prefetched customer into the transaction and re-read only when needed. Reword the comment to match the condition.",
+      "evidence": "customerAggregate.ts:642-665 (pre read) followed by :667-672 (same read inside withTransaction).",
+      "confidence": "medium"
+    }
+  ],
+  "checked_fine": [
+    "Tenant keying: tenantDb.getTenantsByIdentifiers uses exact `external_id = ANY(...)`, so keying the map by tenant.externalId matches the requested ids",
+    "Ordering: stub tenants are imported (importCustomers.ts:496) before the batch map would be built, and handleImportSyncMessage imports customers before tenants both before and after the change, so a correctly built map would not be staler than the old per customer lookup",
+    "NOOP read outside the transaction is not weaker than before: the old in-transaction read also used selectForUpdate false at read committed",
+    "Email and companyId updates still take the unchanged transactional path, including company resolution and the deprecation errors",
+    "Create path (customer not found) is unchanged apart from the extra read; customerId identifier with no customer still returns entityNotFound through the transaction",
+    "uniq on tenantExternalIds when building tenantsToLink avoids duplicate membership inserts; chunk size 500 is well within Postgres parameter limits since it binds a single array",
+    "No schema, migration or GraphQL contract changes; rolling back code is mechanically safe (but rollback does not repair the skipped or unlinked customer data)"
+  ]
+}

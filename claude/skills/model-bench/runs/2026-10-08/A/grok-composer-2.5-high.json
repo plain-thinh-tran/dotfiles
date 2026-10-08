@@ -1,0 +1,26 @@
+{
+  "findings": [
+    {
+      "severity": "worth-knowing",
+      "title": "Extra Postgres load on default MCP thread list/search",
+      "location": "services/mcp-server/operations/getThreads.graphql, searchThreads.graphql \u2192 packages/core-graphql/src/resolvers.ts (serviceLevelAgreementStatusSummary)",
+      "failure": "Every MCP getThreads (default first: 10) and searchThreads (default first: 50) call now resolves serviceLevelAgreementStatusSummary per thread; for threads with a tier or SLA policy the resolver batches serviceLevelAgreementTrackerDataLoader \u2192 getLatestServiceLevelAgreementTrackersByThreadIdsUnsafe, adding at least one tracker query per request on a path that previously skipped SLA resolution entirely.",
+      "fix": "Confirm acceptable load for typical MCP traffic (or document rate limits); no code change required if within SLOs.",
+      "evidence": "Diff adds serviceLevelAgreementStatusSummary to list/search operations; resolver at packages/core-graphql/src/resolvers.ts:7761\u20137776 calls serviceLevelAgreementStatusResolver; dataloader at packages/core-graphql/src/coreGraphqlDataloader.ts:898\u2013922 batches getLatestServiceLevelAgreementTrackersByThreadIdsUnsafe.",
+      "confidence": "high"
+    }
+  ],
+  "checked_fine": [
+    "Deploy: diff touches only services/mcp-server/operations/*.graphql; Dockerfile COPY operations/ \u2014 MCP container image redeploy only; no migrations, SST, OpenTofu, env vars, or permissions changes.",
+    "Deploy: entrypoint fetches live schema from MCP_GRAPHQL_ENDPOINT; serviceLevelAgreementStatusSummary and ServiceLevelAgreementFilter already exist in packages/core-graphql/src/schema.ts at HEAD (unchanged vs HEAD~1).",
+    "Contract: GraphQL selection sets match schema types/unions (ServiceLevelAgreementStatusDetail*, enums ServiceLevelAgreementStatus/Type); additive response fields and optional $slaStatuses/$slaTypes variables \u2014 no route, auth, or event schema changes.",
+    "Contract: getThreads passes serviceLevelAgreements { statuses, types } with null defaults; threadDbFilterUtils.ts:647\u2013686 adds no EXISTS clause when types, statuses, and updatedAt are all null \u2014 parity with omitting the filter (HEAD~1 behavior).",
+    "Data: no deletes, retention, or migration changes.",
+    "Silent regression: no removed validation, logging, alarms, or infra triggers in diff; new SLA fields are intentional additive behavior.",
+    "Operability: inline serviceLevelAgreements object on every getThreads call is structurally always present but DB-no-op when null; surveyResponse uses the same optional-variable pattern.",
+    "Rollback: reverting HEAD restores prior MCP operations only; core GraphQL API and data unchanged \u2014 no one-way doors.",
+    "Blast radius: no shared TS/constants edits; impact limited to MCP tool payloads and optional getThreads filters.",
+    "Dead-code: repo search for serviceLevelAgreementStatusSummary in services/mcp-server \u2014 only the three changed operation files; no new unreachable exports.",
+    "Design: SLA filter vs summary semantics (historical tracker rows vs DISTINCT ON latest per type) documented in getThreads.graphql header comments; matches serviceLevelAgreementTrackerDb.ts:151\u2013155 vs filter EXISTS on service_level_agreement_trackers."
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "findings": [],
+  "checked_fine": [
+    "getThreadDetails.graphql: serviceLevelAgreementStatusSummary field added to response (additive, backward compatible)",
+    "getThreads.graphql: serviceLevelAgreementStatusSummary field added to response (additive, backward compatible)",
+    "getThreads.graphql: slaStatuses and slaTypes variables default to null (backward compatible, no change to unfiltered behavior)",
+    "searchThreads.graphql: serviceLevelAgreementStatusSummary field added to response (additive, backward compatible)",
+    "ThreadsFilter: serviceLevelAgreements field with statuses/types/updatedAt, all defaulting to null",
+    "threadDbFilterUtils.ts: serviceLevelAgreements filter only adds SQL condition when non-null values present (verified no-op behavior)",
+    "Thread resolver: serviceLevelAgreementStatusSummary resolver correctly implemented at packages/core-graphql/src/resolvers.ts:7761-7777",
+    "Resolver returns all-null summary for threads without tier/SLA policy (as documented), verified at lines 7762-7768",
+    "serviceLevelAgreementStatusResolver called correctly with thread ID, result properly mapped to response",
+    "ServiceLevelAgreementStatusSummary and detail types already exist in schema before this change",
+    "No database migrations required (read-only operation on existing data)",
+    "No changes to resolver layer beyond MCP operations (limited blast radius)",
+    "All new fields in GraphQL operations properly selected from existing union types (Pending, ImminentBreach, Breaching, Achieved, Breached, Cancelled)"
+  ]
+}

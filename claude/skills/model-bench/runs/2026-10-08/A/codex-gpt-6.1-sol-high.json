@@ -1,0 +1,35 @@
+{
+  "findings": [
+    {
+      "severity": "worth-knowing",
+      "title": "Document the actual SLA __typename values",
+      "location": "services/mcp-server/operations/getThreadDetails.graphql:5",
+      "failure": "The tool description advertises literal values such as Pending and Breaching, but responses contain ServiceLevelAgreementStatusDetailPending and ServiceLevelAgreementStatusDetailBreaching. MCP consumers comparing against the documented values will fail to recognize SLA states.",
+      "fix": "Explain that __typename contains the ServiceLevelAgreementStatusDetail prefix, and give an exact returned value.",
+      "evidence": "packages/core-graphql/src/resolvers.ts:11918 returns the full concrete type names for all six statuses. GraphQL.js src/type/introspection.ts, TypeNameMetaFieldDef.resolve, returns parentType.name; it does not shorten the name.",
+      "confidence": "high"
+    },
+    {
+      "severity": "refactor",
+      "title": "Reuse an SLA detail fragment within each operation",
+      "location": "services/mcp-server/operations/getThreadDetails.graphql:94; services/mcp-server/operations/getThreads.graphql:174; services/mcp-server/operations/searchThreads.graphql:114",
+      "failure": "The PR introduces twelve identical status-detail selections. Future timestamp or status changes require twelve coordinated edits, allowing the four SLA targets to return inconsistent detail shapes.",
+      "fix": "Define an operation-local fragment on ServiceLevelAgreementStatusDetail in each file and spread it into all four targets.",
+      "evidence": "A local token comparison confirmed all twelve selections are identical. lambdas/core-graphql-api/src/threads/changeThreadPriorityMutation.slas.litest.ts:36 already uses fragment slaFields on this union; services/mcp-server/operations/getBroadcastDetails.graphql:122 demonstrates operation-local fragment reuse in MCP operations.",
+      "confidence": "high"
+    }
+  ],
+  "checked_fine": [
+    "Deploy: Dockerfile copies the changed operations into the ECS image, and mcp.config.yaml loads that directory. All selected fields and filter types already exist in HEAD~1; no new schema deployment dependency, environment variable, secret, permission, resource, or export is introduced.",
+    "Contract: Token comparison against HEAD~1 confirmed every existing query field, argument, default, sort, and pagination selection is preserved in all three files. The new filters are optional and default to null.",
+    "Contract: All six SLA union variants select valid timestamp fields, including pause details for Pending and ImminentBreach. The existing resolver adds no permission requirement.",
+    "Data: The changes only extend read operations; no writes, migrations, deletion policies, or retention changes.",
+    "Silent regression: The all-null SLA filter returns an empty SQL fragment in threadDbFilterUtils.ts:943. Historical tracker matching is explicitly documented, and the summary uses the existing latest-tracker resolver.",
+    "Silent regression: Threads without a tier or SLA policy return four null targets without loading trackers; other threads use the existing batched, traced dataloader.",
+    "Operability: Operation edits remain inside the Docker asset build context, so they participate in image redeployment.",
+    "Rollback: HEAD~1 supports the same backend schema. Rolling back removes the new MCP fields and filters without leaving incompatible stored data or infrastructure.",
+    "Blast radius: No shared constants, helpers, schemas, or lists change; the additions affect these three MCP tools.",
+    "Dead code: Searches across services, packages, lambdas, testing, test, infra, terraform, and docs traced operation loading and SLA consumers. Both added variables are referenced, and the union resolver produces every selected branch.",
+    "Validation scope: Review and token comparisons were local and read-only. Runtime tests were not run; node_modules is absent."
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "findings": [
+    {
+      "severity": "refactor",
+      "title": "Massive duplication of SLA status detail selection",
+      "location": "services/mcp-server/operations/",
+      "failure": "The PR duplicates the exact same 42-line `ServiceLevelAgreementStatusDetail` selection block 12 times (4 targets \u00d7 3 operation files). This creates 500 lines of duplicated code that will drift if SLA status fields change.",
+      "fix": "Extract the selection into a GraphQL fragment `fragment SlaStatusDetail on ServiceLevelAgreementStatusDetail` (either in a shared `fragments.graphql` file or within each query file) and use `...SlaStatusDetail` for each of the 4 targets.",
+      "evidence": "Apollo MCP server and `validateMcpOperations.ts` both parse the entire `operations/` directory together, so a shared fragment is fully supported. Even if kept per-file, a fragment reduces 168 lines to 54 lines per file.",
+      "confidence": "high"
+    }
+  ],
+  "checked_fine": [
+    "The default `null` values for `$slaStatuses` and `$slaTypes` correctly result in a no-op filter in `threadDbFilterUtils.ts`.",
+    "The `__typename` field is correctly included in the union type selections.",
+    "All fields of the `ServiceLevelAgreementStatusDetail` union types are correctly selected."
+  ]
+}

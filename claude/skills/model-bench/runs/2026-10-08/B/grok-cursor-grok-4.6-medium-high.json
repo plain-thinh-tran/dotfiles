@@ -1,0 +1,69 @@
+{
+  "findings": [
+    {
+      "severity": "breaking",
+      "title": "Batch tenant lookup uses records that have no tenantExternalIds",
+      "location": "packages/importers/src/handlers/importCustomers.ts:485-513",
+      "failure": "HubSpot/Salesforce/Attio CRM customer syncs stop linking customers to existing tenants. Tenant-centric import jobs skip those customers as if the tenants did not exist.",
+      "fix": "Pass `inRecords.flatMap((r) => r.tenantExternalIds ?? [])` (or the complement of `recordsWithTenantStubs`) into `getTenantsByExternalId`, not `recordsWithTenantStubs`.",
+      "evidence": "`recordsWithTenantStubs` is `inRecords.filter(r => r.tenantExternalIds === undefined || r.tenantExternalIds.length === 0)`. `getTenantsByExternalId` is then called with that set's `tenantExternalIds`, which is always []. `importCustomers` still passes the resulting empty Map into every `importCustomer`. HEAD~1 called `tenantAggregate.getTenantsFromIdentifiers` per record from `nangoCustomer.tenantExternalIds`. Adapters that only set `tenantExternalIds` (never tenant stubs): `packages/importers/src/adapters/hubspot/mappers/toCustomer.ts`, `salesforce/mappers/toCustomer.ts`, `attio/mappers/toCustomer.ts`. Production caller: `lambdas/nango-sync-handler/src/handleImportSyncMessage.ts:173`. Comment on `tenantsByExternalId`: missing key means no such tenant. `shouldSkipTenantlessCustomers` then skips when `relevantTenants.length === 0`. The new litest `looks up tenantExternalIds for the whole batch at once` would fail `toHaveLength(1)` because `chunk(uniq([]), 500)` never calls `getTenantsFromIdentifiers`.",
+      "confidence": "high"
+    },
+    {
+      "severity": "breaking",
+      "title": "importCustomer treats a missing tenant map as empty instead of looking up",
+      "location": "packages/importers/src/handlers/importCustomers.ts:325-331",
+      "failure": "Thread, thread-message, and nested-record customer imports never attach tenants when the record has `tenantExternalIds`. Customers still upsert; memberships are not added.",
+      "fix": "If `args.tenantsByExternalId` is undefined, keep the HEAD~1 `getTenantsFromIdentifiers` call. Use the map only when the caller supplied it.",
+      "evidence": "`const tenantsByExternalId = args.tenantsByExternalId ?? new Map()` then `tenantsByExternalId.get(externalId)` with no DB lookup. Call sites that pass only `{ record }` (search `importCustomer(ctx`): `packages/importers/src/handlers/importThreads.ts:140`, `importThreadMessage.ts:150`, `importAllCustomersAndUsersInRecords.ts:59`. PR text says single-customer callers keep the per-customer lookup; they do not. `importCustomerTenantMemberships` only adds when `tenantsToLink.length > 0`.",
+      "confidence": "high"
+    },
+    {
+      "severity": "regression",
+      "title": "Tenant chunk lookup failures are swallowed and look like missing tenants",
+      "location": "packages/importers/src/handlers/importCustomers.ts:282-290",
+      "failure": "A failed `getTenantsFromIdentifiers` chunk no longer fails the import. Those tenants are omitted from the map, so customers import without memberships or are skipped by tenant-centric jobs.",
+      "fix": "On `lookupResult.isErr`, return `Result.err(lookupResult.error)` (HEAD~1 `scope.fail` on lookup error). Do not `continue`.",
+      "evidence": "HEAD~1: `if (lookupResult.isErr) { return scope.fail(ctx, lookupResult.error); }`. New loop: `ctx.log.warn` then `continue`, then always `return Result.ok(tenantsByExternalId)`. `packages/aggregates/AGENTS.md` / root AGENTS.md: never silently ignore errors; logging and continuing is not enough. After a chunk error, missing keys are defined as 'no such tenant exists'.",
+      "confidence": "high"
+    },
+    {
+      "severity": "regression",
+      "title": "NOOP fast path ignores importedByJobDefinitionId",
+      "location": "packages/aggregates/src/customers/customerAggregate.ts:645-664",
+      "failure": "Repeat CRM upserts of an unchanged existing customer never write `imported_by_job_definition_id`. Customers that already exist (email/chat/API) stay unattributed to the import job; a later job id change also never lands.",
+      "fix": "Call `shouldPerformCustomerUpsertUpdate(existing, onUpdate, importedByJobDefinitionId)` on the fast path, matching `updateCustomerUnsafe` at line 1026.",
+      "evidence": "`parseImportCustomer` sets `onUpdate: {}` (`importCustomers.ts:240`), so CRM always takes the fast path (`onUpdate.email` and `onUpdate.companyId` are undefined). Fast path: `shouldPerformCustomerUpsertUpdate(existing, onUpdate)` with two args. `shouldPerformCustomerUpsertUpdate` returns true when the third arg differs (`packages/aggregates/src/utils/shouldPerformCustomerUpsertUpdate.ts:16-20`; tests at `shouldPerformCustomerUpsertUpdate.test.ts:105-111`). `nango-sync-handler` passes `importJobDefinitionId` into `upsertCustomer` via `importCustomer`. Only `updateCustomerUnsafe` writes `importedByJobDefinitionId` (`customerAggregate.ts:1060-1062`).",
+      "confidence": "high"
+    },
+    {
+      "severity": "dead-code",
+      "title": "importCustomers error branch for tenant map cannot run",
+      "location": "packages/importers/src/handlers/importCustomers.ts:510-516",
+      "failure": "The `tenantsByExternalIdResult.isErr` return is unreachable; chunk failures never surface as `Result.err`.",
+      "fix": "Make `getTenantsByExternalId` return `Result.err` on lookup failure, or drop the dead `isErr` check if errors stay swallowed (they must not).",
+      "evidence": "Search `getTenantsByExternalId`: only defined at `importCustomers.ts:273`. Every path ends `return Result.ok(tenantsByExternalId)` (line 290). `continue` on `lookupResult.isErr` (282-286) is the only error handling. Sole caller is `importCustomers.ts:510` which then checks `isErr`.",
+      "confidence": "high"
+    },
+    {
+      "severity": "refactor",
+      "title": "Reuse the transactional shouldPerformCustomerUpsertUpdate call shape",
+      "location": "packages/aggregates/src/customers/customerAggregate.ts:658-660",
+      "failure": "Duplicating the no-op predicate without the job-definition argument recreates a class of missed updates whenever `onUpdate` is empty (CRM).",
+      "fix": "Pass the same three arguments as `updateCustomerUnsafe` (`existingCustomer`, `{...onUpdate, companyId?}`, `importedByJobDefinitionId`) or call one shared helper so the fast path cannot drift.",
+      "evidence": "Existing helper `shouldPerformCustomerUpsertUpdate` already encodes job-definition dirty checking. Full path at `customerAggregate.ts:1025-1033` passes `importedByJobDefinitionId`; new path at 660 does not. CRM `onUpdate` is `{}` so job id is the only update on a repeat sync.",
+      "confidence": "high"
+    }
+  ],
+  "checked_fine": [
+    "Deploy: application-only change; no SST/OpenTofu, migrations, env vars, secrets, CFN exports, or ForceNew/prevent_destroy.",
+    "Contract: GraphQL upsertCustomer / importCustomers routes, methods, auth unchanged; upsert still returns NOOP|UPDATED|CREATED with the same customer type.",
+    "Data: no deletes, retention, or irreversible DDL; tenant memberships are still add-only so a later good sync can attach missing links.",
+    "Rollback: reverting the commit restores per-record tenant lookup and transactional no-ops; rows imported during the broken window are not a one-way door.",
+    "upsertCustomer: missing customers and email/company onUpdate still take withTransaction; permission check still runs before the fast path; selectForUpdate remains false as before.",
+    "getTenantsFromIdentifiers / tenantDb.getTenantsByIdentifiers: empty input returns []; ANY() has no tighter cap than the new 500 chunk (lodash-es/chunk already used in this repo).",
+    "Blast radius of shouldPerformCustomerUpsertUpdate itself: function body unchanged; GraphQL upserts that set email still skip the fast path.",
+    "Intended NOOP: skipping withTransaction when fields match (except job definition) is the load reduction; extra getCustomerByIdentifier on the update path is an extra read, not a behaviour drop.",
+    "Silent metrics: fewer transactions on CRM no-ops is the point of the PR, not a dropped alarm/trace contract in this diff."
+  ]
+}

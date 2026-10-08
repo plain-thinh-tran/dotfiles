@@ -1,0 +1,89 @@
+{
+  "findings": [
+    {
+      "severity": "breaking",
+      "title": "Batch tenant prefetch uses records that exclude tenantExternalIds",
+      "location": "packages/importers/src/handlers/importCustomers.ts:510-512",
+      "failure": "importCustomers always passes an empty tenantsByExternalId map into every importCustomer call, so CRM batch syncs never resolve tenantExternalIds: tenant\u2013customer memberships are not created (or tenant-centric jobs skip customers as if no tenant matched).",
+      "fix": "Collect external IDs from records that have tenantExternalIds, e.g. inRecords.flatMap((r) => r.tenantExternalIds ?? []), not recordsWithTenantStubs (that filter keeps only records without tenantExternalIds).",
+      "evidence": "recordsWithTenantStubs is defined at lines 485-487 as records with tenantExternalIds undefined or length 0; getTenantsByExternalId at 510-512 flatMaps tenantExternalIds from that set, which is always []. importCustomer at 327-331 only reads the passed map and never queries. Litest importCustomers.tenants.litest.ts:107-152 and :348-374 assert memberships/import for tenantExternalIds via importCustomers.",
+      "confidence": "high"
+    },
+    {
+      "severity": "breaking",
+      "title": "importCustomer no longer looks up tenants when batch map omitted",
+      "location": "packages/importers/src/handlers/importCustomers.ts:325-331",
+      "failure": "Callers that invoke importCustomer without tenantsByExternalId (importThreads.ts:140, importThreadMessage.ts, importAllCustomersAndUsersInRecords.ts) get an empty Map and never call getTenantsFromIdentifiers, so tenantExternalIds on embedded customers stop linking to tenants.",
+      "fix": "When args.tenantsByExternalId is undefined, keep the HEAD~1 behaviour: call tenantAggregate.getTenantsFromIdentifiers and fail on error. Use the map only when the batch path explicitly supplies it (non-undefined).",
+      "evidence": "Diff removes per-record lookup and replaces with args.tenantsByExternalId ?? new Map(); optional param defaults to empty, not to lookup. Grep importCustomer( shows no other caller passes tenantsByExternalId.",
+      "confidence": "high"
+    },
+    {
+      "severity": "regression",
+      "title": "upsertCustomer fast path ignores importedByJobDefinitionId",
+      "location": "packages/aggregates/src/customers/customerAggregate.ts:658-663",
+      "failure": "Nango importCustomers passes onUpdate: {} and importedByJobDefinitionId (importCustomers.ts:406-414). Existing customers whose fields match but importedByJobDefinitionId is null or stale used to get a write via shouldPerformCustomerUpsertUpdate(..., importedByJobDefinitionId) inside the transaction (lines 1025-1033); the fast path calls shouldPerform without the third argument, returns NOOP, and never sets importedByJobDefinitionId on the row.",
+      "fix": "Pass importedByJobDefinitionId into shouldPerformCustomerUpsertUpdate on the fast path, same as the transactional branch at line 1026.",
+      "evidence": "shouldPerformCustomerUpsertUpdate.ts:16-21 returns true when importedByJobDefinitionId differs from customer.importedByJobDefinitionId; tests at shouldPerformCustomerUpsertUpdate.test.ts:105-111. parseImportCustomer sets onUpdate: {} (importCustomers.ts:240). Fast path guard onUpdate.email === undefined && onUpdate.companyId === undefined matches CRM imports.",
+      "confidence": "high"
+    },
+    {
+      "severity": "regression",
+      "title": "Chunk tenant lookup errors swallowed",
+      "location": "packages/importers/src/handlers/importCustomers.ts:282-290",
+      "failure": "A failed getTenantsFromIdentifiers for one chunk logs a warning and continues; affected external IDs are treated as missing (no link or tenant-centric skip) instead of failing the import like the removed per-customer lookup did (scope.fail on lookupResult.isErr).",
+      "fix": "Return Result.err on first chunk failure, or aggregate failures and return err from getTenantsByExternalId so importCustomers aborts.",
+      "evidence": "getTenantsByExternalId always ends with Result.ok (line 290). Diff removed importCustomer failure on lookupResult.isErr. AGENTS.md: NEVER silently ignore errors \u2014 check every Result.",
+      "confidence": "high"
+    },
+    {
+      "severity": "dead-code",
+      "title": "Unreachable isErr checks after getTenantsByExternalId",
+      "location": "packages/importers/src/handlers/importCustomers.ts:514-516",
+      "failure": "Dead branches mislead maintainers; getTenantsByExternalId never returns Err.",
+      "fix": "Either make getTenantsByExternalId return Err on lookup failure and keep the check, or remove the isErr guard.",
+      "evidence": "Repo search on getTenantsByExternalId in importCustomers.ts: only Result.ok at line 290, no Result.err in the function.",
+      "confidence": "high"
+    },
+    {
+      "severity": "refactor",
+      "title": "Optional batch map sentinel vs empty Map",
+      "location": "packages/importers/src/handlers/importCustomers.ts:298-299,327",
+      "failure": "Using ?? new Map() conflates \u201cno batch prefetch\u201d with \u201cprefetch found nothing\u201d, which caused removal of the inline lookup.",
+      "fix": "Type tenantsByExternalId as optional; undefined triggers legacy lookup, defined Map (including empty after a real batch query) uses map-only resolution.",
+      "evidence": "PR summary states single-customer callers keep per-customer lookup when no map is supplied; current code does not distinguish undefined from empty Map.",
+      "confidence": "high"
+    },
+    {
+      "severity": "worth-knowing",
+      "title": "NOOP fast path widens lock-free read window",
+      "location": "packages/aggregates/src/customers/customerAggregate.ts:645-664",
+      "failure": "More upserts return NOOP without withTransaction; concurrent writers can change the row between the read and a follow-up that assumed NOOP\u2014same class of race as transactional path with selectForUpdate: false (comment at 670-672), but higher volume on CRM resyncs.",
+      "fix": "Accept as tradeoff or only fast-path when importedByJobDefinitionId and shouldPerform align; document for on-call.",
+      "evidence": "PR summary notes NOOP without locking races with concurrent writers. Transactional path already uses selectForUpdate: false.",
+      "confidence": "medium"
+    },
+    {
+      "severity": "worth-knowing",
+      "title": "Rollback after bad deploy leaves membership gaps",
+      "location": "packages/importers/src/handlers/importCustomers.ts (tenant link path)",
+      "failure": "If production runs with broken tenant resolution, customers can be created/updated without tenant memberships; rolling code back does not backfill memberships\u2014a full CRM re-sync is needed.",
+      "fix": "Verify fix before merge; plan re-sync if this shipped.",
+      "evidence": "importCustomerTenantMemberships only runs when tenantsToLink.length > 0 (importCustomers.ts:442-450); broken map yields empty tenantsToLink.",
+      "confidence": "medium"
+    }
+  ],
+  "checked_fine": [
+    "Deploy: diff is only packages/aggregates and packages/importers application code\u2014no SST/OpenTofu, migrations, env vars, or IAM changes.",
+    "Contract: no GraphQL schema, HTTP routes, or event payload schema changes in the diff.",
+    "Data: no migrations, deletes, or retention changes.",
+    "upsertCustomer still opens withTransaction for creates, field updates, and when onUpdate includes email or companyId (customerAggregate.ts:645,667+).",
+    "CRM parseImportCustomer still uses onUpdate: {} so fast path is intentional for field-only parity; email/company resolution stays on the slow path when those keys are set.",
+    "importCustomers still dedupes tenant external IDs with uniq and chunks batch lookups at 500.",
+    "Import recorder still maps upsert NOOP to skipped outcome (importRecorder.ts:68-69)\u2014unchanged semantics when NOOP is correct.",
+    "GraphQL upsertCustomer does not pass importedByJobDefinitionId (upsertCustomerMutation.ts:27-46)\u2014fast-path job-definition gap is import-scoped.",
+    "Stub-tenant import path (inline tenants on record, no tenantExternalIds) still uses importTenants + tenantRecord and is unchanged by the broken prefetch line.",
+    "New litests document intended noop transaction count and batch lookup behaviour once tenant prefetch is fixed.",
+    "Logging on new DB errors uses { err } key (customerAggregate.ts:651-652)."
+  ]
+}

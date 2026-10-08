@@ -1,0 +1,35 @@
+{
+  "findings": [
+    {
+      "severity": "breaking",
+      "title": "Default getThreads calls generate invalid SQL",
+      "location": "services/mcp-server/operations/getThreads.graphql:78-103",
+      "failure": "Every existing getThreads call that omits the new SLA variables now passes an all-null serviceLevelAgreements object. The thread query produces an empty parenthesized SQL predicate, so the MCP tool fails instead of returning threads.",
+      "fix": "Use one nullable `$serviceLevelAgreements: ServiceLevelAgreementFilter = null` variable and pass it directly. Alternatively, make the backend normalize an all-null SLA filter to null or emit `1 = 1` rather than an empty SQL fragment.",
+      "evidence": "GraphQL variable coercion applies the declared null defaults before evaluating the input object, so lines 100-103 produce `{statuses:null,types:null}`. ThreadsFilter preserves that non-null object and fills updatedAt with null (packages/core-graphql/src/threads/threadsFilter.ts:59-71). buildFilters retains every non-null filter value (packages/db/src/filtering.ts:110-125), while the SLA builder returns `sql.fragment`` ` when all members are null (packages/aggregates/src/thread/threadDbFilterUtils.ts:943-947). Slonik joins do not discard an empty fragment, and threadDb inserts the resulting predicate after `AND` (packages/aggregates/src/thread/threadDb.ts:1247-1254). The old operation did not supply this object.",
+      "confidence": "high"
+    },
+    {
+      "severity": "worth-knowing",
+      "title": "The tool description documents incorrect __typename values",
+      "location": "services/mcp-server/operations/getThreadDetails.graphql:3-6",
+      "failure": "An MCP agent following the description may test for `Pending`, `Breaching`, and similar values, but those values are never returned, causing it to misclassify or overlook SLA state.",
+      "fix": "Document the exact values, such as `ServiceLevelAgreementStatusDetailPending` and `ServiceLevelAgreementStatusDetailBreaching`, or describe how to derive the status from the type name.",
+      "evidence": "The operation selects GraphQL `__typename`. The schema defines the union members as ServiceLevelAgreementStatusDetailPending, ServiceLevelAgreementStatusDetailImminentBreach, ServiceLevelAgreementStatusDetailBreaching, ServiceLevelAgreementStatusDetailAchieved, ServiceLevelAgreementStatusDetailBreached, and ServiceLevelAgreementStatusDetailCancelled (packages/core-graphql/src/schema.ts:14072-14118). GraphQL returns those exact type names.",
+      "confidence": "high"
+    }
+  ],
+  "checked_fine": [
+    "All pre-existing selections, variables, routes, methods, authentication behavior, and pagination fields remain intact in the three operations.",
+    "The added union fragments and timestamp fields match the existing GraphQL schema, including nullable SLA targets and status-specific fields.",
+    "SLA enum values and the documented historical-tracker filter semantics match the existing backend filter implementation.",
+    "Summary resolution is DataLoader-batched rather than N+1, and its database query is supported by the workspace/thread/type/created-at index.",
+    "Deployment wiring, environment variables, permissions, secrets, infrastructure outputs, and exports are unchanged; the MCP image already fetches a schema containing these fields at startup.",
+    "No migrations, stored schemas, retention policies, deletes, or other data and rollback one-way doors are introduced.",
+    "Rollback only removes additive MCP response fields and filters; it does not leave incompatible persisted state.",
+    "The changed files are reachable: the Dockerfile copies the operations directory and mcp.config.yaml loads that directory. Repo-wide searches for getThreadDetails, getThreads, and searchThreads found their respective operation definitions.",
+    "No shared constants, utilities, backend resolvers, or lists were changed, so there is no additional blast radius.",
+    "No obsolete implementation, unreachable export, unused parameter, or stale runbook was introduced or left behind.",
+    "No existing repository helper can directly replace the repeated cross-file GraphQL selection without changing how Apollo MCP loads operation documents."
+  ]
+}
