@@ -1,0 +1,2 @@
+#!/bin/sh
+exec /opt/homebrew/bin/bun "$(dirname "$(readlink -f "$0")")/mc.ts" "$@"

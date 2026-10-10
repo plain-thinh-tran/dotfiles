@@ -29,7 +29,7 @@ Each run lives in `.context/avengers/<slug>/` inside the target repo. Every meet
    2. While it runs, write your own proposal to `design.opus.md` without opening `design.sol.md` or `design.grok.md`. Blind first, so nobody anchors on the chair. If you have already seen a solution (an existing PR, a fix the user pasted), the Opus seat goes to a fresh Agent with `model: "opus"` given only `brief.md` and the repo.
    3. Read all three. Write `design.md`: the chosen approach, the files and changes, risks, and a Decisions section recording each disagreement, who held which side, and why you ruled the way you did. Take the best idea regardless of who raised it; never merge two approaches into a compromise neither proposed.
    4. Run `council.sh challenge <dir>`. For every objection, change `design.md` or record in Decisions why it does not hold, checked against the code.
-   5. Show the user the design in under ten lines, naming any split vote. Proceed unless they stop you.
+   5. Show the user the design in under ten lines, naming any split vote. Then hand the Decisions to Mission Control (see below): split votes as `needs-you` decisions, rulings that shape the design as `key-decision`s. With any `needs-you` todo, wait for the user's answers before Build; otherwise proceed unless they stop you.
 4. **Build.** Split `design.md` into work packets and hand them to Sonnet workers, parallel where they do not share files. Keep shared file coordination and tiny or delicate edits yourself. Each packet carries:
    - repo path, exact objective, the `design.md` section it implements
    - files in scope and explicitly out of scope
@@ -46,9 +46,20 @@ Each run lives in `.context/avengers/<slug>/` inside the target repo. Every meet
       - Action: real blocking and should-fix findings get fixed. Nits are dropped unless all three members raise the same one and it improves the code; list those for the user, never fix them unasked.
       - Record the verdict and reason for every finding in `review.md`.
    4. Hand accepted fixes to Sonnet workers as packets, vet them, and rerun the review meeting once if the fixes changed behaviour. Stop after the second meeting; anything still open goes to the user.
+   5. Anything still open after the second meeting goes to Mission Control as `needs-you` decisions, and the report waits for the answers.
 7. **Report.** Lead with what shipped and whether the council signed off. Then: split decisions from design and review, findings rejected and why, tests run, anything left open. Link `design.md` and `review.md`.
 
 Model choices for every seat come from the benchmark in `~/.claude/skills/model-bench/results.md`; rerun `/model-bench` when a new model ships.
+
+## Mission Control
+
+Decisions the user owns go through Mission Control, not the chat. Write `<dir>/mc.json`:
+
+- `runId`: `avengers-<slug>`; `skill`: `avengers`; `title`: one line.
+- `agents`: the seats that took part, with `role` `orchestrator` for you, `council` for Codex Sol and Cursor Grok.
+- `todos`: one per decision, with `id` (`D1`, `D2`, …), `kind` `decision`, `category`, `title`, `question`, `options` (one per side actually argued, `id` and `label`), `positions` (one per seat: `agent`, `stance`, `optionId`, `summary`, `reason`, `evidence` as `path:line`), `recommendation` (`by` your id, `optionId`, `summary` with the ruling's reason), `tradeoffs`, `caveats`.
+
+Push it with `~/.claude/bin/mc push <dir>/mc.json`. Key decisions arrive pre-answered with your ruling, so the user only acts to override. When you must wait, start `~/.claude/bin/mc wait avengers-<slug>` with `run_in_background` and end the turn. When it prints decisions, update `design.md` (record the user's call in Decisions), run `~/.claude/bin/mc resolve avengers-<slug> <id> "<what changed>"` for each, and continue. Run `~/.claude/bin/mc done avengers-<slug>` after the report.
 
 ## Council Failures
 
