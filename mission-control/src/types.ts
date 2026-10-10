@@ -38,6 +38,7 @@ export type Answer = {
   optionId: string | null;
   text: string;
   deferred: boolean;
+  question?: boolean;
   answeredAt: string;
   preset?: boolean;
 };
@@ -62,6 +63,7 @@ export type Todo = {
   resolution: string | null;
   doneAt?: string;
   diffs?: { path: string; patch: string }[];
+  conversation?: { from: 'thinh' | 'agent'; text: string; at: string }[];
 };
 
 export type Session = {

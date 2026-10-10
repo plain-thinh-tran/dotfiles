@@ -2,7 +2,7 @@ import { watch } from 'node:fs';
 import index from '../web/index.html';
 import { avatarPath, downloadMissingAvatars, isAvatarId } from './avatarFiles';
 import { computeLiveInfo } from './live';
-import { threadPrompt } from './prompt';
+import { isAwaitingPickup, isLocked, isReadyToSubmit, threadPrompt } from './prompt';
 import {
   buildThreads,
   ensureRunsDir,
@@ -20,15 +20,14 @@ import {
   withRunLock,
   writeRun,
 } from './store';
-import type { Run, Todo, TodoState } from './types';
+import type { Run, Todo } from './types';
 
 const PORT = Number(process.env.PORT ?? 4747);
 const LIVE_INTERVAL_MS = 3000;
 const PING_INTERVAL_MS = 15000;
 const PRESENCE_TTL_MS = 30000;
-const LOCKED_STATES: TodoState[] = ['submitted', 'picked_up', 'done'];
 
-type AnswerBody = { optionId: string | null; text: string; deferred: boolean };
+type AnswerBody = { optionId: string | null; text: string; deferred: boolean; question?: boolean };
 type TodoRequest = Request & { params: { runId: string; todoId: string } };
 type ThreadRequest = Request & { params: { sessionId: string } };
 type Client = { controller: ReadableStreamDefaultController<Uint8Array>; archived: boolean };
@@ -56,10 +55,11 @@ function conflict(message: string): Response {
 
 function parseAnswerBody(raw: unknown): AnswerBody | null {
   if (typeof raw !== 'object' || raw === null) return null;
-  const { optionId, text, deferred } = raw as Record<string, unknown>;
+  const { optionId, text, deferred, question } = raw as Record<string, unknown>;
   if (optionId !== null && typeof optionId !== 'string') return null;
   if (typeof text !== 'string' || typeof deferred !== 'boolean') return null;
-  return { optionId, text, deferred };
+  if (question !== undefined && typeof question !== 'boolean') return null;
+  return question === true ? { optionId, text, deferred, question } : { optionId, text, deferred };
 }
 
 async function readJson(req: Request): Promise<unknown> {
@@ -93,7 +93,7 @@ async function answerTodo(req: TodoRequest): Promise<Response> {
   if (body === null) return Response.json({ error: 'Invalid answer body' }, { status: 400 });
   return await mutateTodo(
     req,
-    (todo) => !LOCKED_STATES.includes(todo.state),
+    (todo) => !isLocked(todo),
     (todo) => {
       todo.state = 'answered';
       todo.answer = { ...body, answeredAt: new Date().toISOString() };
@@ -104,7 +104,7 @@ async function answerTodo(req: TodoRequest): Promise<Response> {
 async function dismissTodo(req: TodoRequest): Promise<Response> {
   return await mutateTodo(
     req,
-    (todo) => !LOCKED_STATES.includes(todo.state),
+    (todo) => !isLocked(todo),
     (todo) => {
       todo.state = 'dismissed';
     },
@@ -127,7 +127,7 @@ type SubmissionResult = { count: number; submissionId: string | null };
 function submitRun(runId: string, at: string): SubmissionResult {
   const run = readRun(runId);
   if (run === null) return { count: 0, submissionId: null };
-  const answered = run.todos.filter((todo) => todo.state === 'answered');
+  const answered = run.todos.filter(isReadyToSubmit);
   if (answered.length === 0) return { count: 0, submissionId: null };
   answered.forEach((todo) => {
     todo.state = 'submitted';
@@ -167,7 +167,7 @@ async function unsubmitThread(req: ThreadRequest): Promise<Response> {
     const submission = run?.submissions.find((candidate) => candidate.id === submissionId);
     if (run === null || submission === undefined) return { reverted: 0, pickedUp: 0 };
     const targets = run.todos.filter((todo) => submission.todoIds.includes(todo.id));
-    const waiting = targets.filter((todo) => todo.state === 'submitted');
+    const waiting = targets.filter(isAwaitingPickup);
     waiting.forEach((todo) => {
       todo.state = 'answered';
       todo.submittedAt = null;

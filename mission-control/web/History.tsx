@@ -3,7 +3,7 @@ import type { Agent, Run, Todo } from '../src/types';
 
 type HistoryEvent = { key: string; label: string; at: string | null };
 
-function formatStamp(iso: string): string {
+export function formatStamp(iso: string): string {
   const date = new Date(iso);
   const time = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
   if (date.toDateString() === new Date().toDateString()) return time;
@@ -29,6 +29,7 @@ function answerEvent(todo: Todo): HistoryEvent | null {
   if (answer === null) return null;
   if (answer.preset === true) return { key: 'answer', label: 'Council pick kept', at: answer.answeredAt };
   if (answer.deferred) return { key: 'answer', label: 'Deferred', at: answer.answeredAt };
+  if (answer.question === true) return { key: 'asked-pending', label: `You asked: ${answer.text.trim()}`, at: answer.answeredAt };
   const label = chosenLabel(todo);
   return { key: 'answer', label: label === 'answered' ? 'You answered' : `You answered: ${label}`, at: answer.answeredAt };
 }
@@ -36,9 +37,17 @@ function answerEvent(todo: Todo): HistoryEvent | null {
 function eventsOf(run: Run, todo: Todo, agents: Agent[]): HistoryEvent[] {
   const council = councilResult(todo);
   const answered = answerEvent(todo);
+  const conversation = (todo.conversation ?? []).map(
+    (message, index): HistoryEvent => ({
+      key: `message-${index}`,
+      label: message.from === 'thinh' ? `You asked: ${message.text}` : 'Agent replied',
+      at: message.at,
+    }),
+  );
   const events: (HistoryEvent | null)[] = [
     { key: 'raised', label: `Raised by ${raisedBy(todo, agents)}`, at: run.createdAt },
     council === null ? null : { key: 'council', label: council, at: run.createdAt },
+    ...conversation,
     answered,
     todo.state === 'dismissed' ? { key: 'dismissed', label: 'Dismissed', at: null } : null,
     todo.submittedAt === null ? null : { key: 'sent', label: 'Sent', at: todo.submittedAt },

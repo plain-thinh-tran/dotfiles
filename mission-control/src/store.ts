@@ -13,6 +13,7 @@ import {
 } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { isReadyToSubmit } from './prompt';
 import type { Agent, LiveState, Run, Session, Thread, Todo, TodoCategory } from './types';
 
 const SAFE_ID = /^[A-Za-z0-9._-]+$/;
@@ -331,6 +332,7 @@ function toTodo(input: TodoInput, existing: Todo | undefined, now: string): Todo
     pickedUpAt: existing?.pickedUpAt ?? null,
     resolution: existing?.resolution ?? null,
     doneAt: existing?.doneAt,
+    conversation: existing?.conversation,
   };
 }
 
@@ -372,8 +374,8 @@ function liveRank(live: LiveState): number {
   return 2;
 }
 
-function countTodos(runs: Run[], state: Todo['state']): number {
-  return runs.reduce((sum, run) => sum + run.todos.filter((todo) => todo.state === state).length, 0);
+function countTodos(runs: Run[], matches: (todo: Todo) => boolean): number {
+  return runs.reduce((sum, run) => sum + run.todos.filter(matches).length, 0);
 }
 
 function sortTodos(run: Run): Run {
@@ -417,8 +419,8 @@ function toThread(sessionId: string, groupRuns: Run[], info: LiveInfo | undefine
     steps: steps?.history ?? [],
     agents: mergeAgents(runs),
     runs,
-    openCount: countTodos(runs, 'open'),
-    answeredCount: countTodos(runs, 'answered'),
+    openCount: countTodos(runs, (todo) => todo.state === 'open'),
+    answeredCount: countTodos(runs, isReadyToSubmit),
     updatedAt: latest.updatedAt,
   };
 }

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { ROLE_NAMES, avatarKindOf } from '../src/avatars';
+import { isAwaitingPickup, isReadyToSubmit } from '../src/prompt';
 import type { LiveState, Run, Thread, Todo } from '../src/types';
 import type { Tab } from './App';
 import { Avatar } from './Avatar';
@@ -48,6 +49,7 @@ function sliceOf(todo: Todo): Slice | null {
   if (todo.state === 'dismissed') return 'dismissed';
   const answer = todo.answer;
   if (answer === null) return todo.state === 'open' ? 'open' : null;
+  if (answer.question === true) return 'open';
   if (answer.deferred) return 'deferred';
   return answer.preset === true ? 'council' : 'you';
 }
@@ -134,6 +136,7 @@ function DecisionSplit({ todos }: { todos: Todo[] }) {
       <div className="split-legend">
         {SLICES.map((slice) => {
           const n = counts.get(slice.id) ?? 0;
+          if (n === 0 && (slice.id === 'deferred' || slice.id === 'dismissed')) return null;
           return (
             <span key={slice.id} className="legend-item" data-zero={n === 0}>
               <i style={{ background: slice.color }} />
@@ -233,8 +236,8 @@ export function Overview(props: { thread: Thread; now: number; onTab: (tab: Tab)
         </header>
         <section className="tiles">
           <Tile label="Needs you" count={count('open')} onClick={() => onTab('open')} />
-          <Tile label="Ready to submit" count={count('answered')} onClick={() => onTab('open')} />
-          <Tile label="Waiting for agent" count={count('submitted')} onClick={() => onTab('progress')} />
+          <Tile label="Ready to submit" count={todos.filter(isReadyToSubmit).length} onClick={() => onTab('open')} />
+          <Tile label="Waiting for agent" count={todos.filter(isAwaitingPickup).length} onClick={() => onTab('progress')} />
           <Tile label="Agent working on it" count={count('picked_up')} onClick={() => onTab('progress')} />
           <Tile label="Done" count={count('done')} today={todos.filter((todo) => isToday(todo.doneAt)).length} onClick={() => onTab('all')} />
           <Tile label="Council picks" count={todos.filter((todo) => todo.category === 'key-decision').length} onClick={() => onTab('all')} />

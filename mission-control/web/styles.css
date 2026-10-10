@@ -2232,3 +2232,50 @@ button.block:hover {
     animation: none;
   }
 }
+
+.chat-count {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 3px;
+  color: var(--amber);
+  font-size: 11px;
+}
+
+.conversation {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.message {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.message[data-from='thinh'] {
+  justify-content: flex-end;
+}
+
+.bubble {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-width: 70%;
+  padding: 7px 11px;
+  border: 1px solid var(--row-border);
+  border-radius: 10px;
+  background: var(--row);
+  white-space: pre-wrap;
+}
+
+.message[data-from='thinh'] .bubble {
+  border-color: rgba(var(--amber-rgb), 0.3);
+  background: rgba(var(--amber-rgb), 0.08);
+}
+
+.bubble small {
+  color: var(--dim);
+  font-size: 11px;
+}

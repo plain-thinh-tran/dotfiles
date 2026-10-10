@@ -37,6 +37,7 @@ At the start of each step below, run `~/.claude/bin/mc step "<step, under 6 word
     - Fold each into the report: "fix in this PR" moves the item to its severity section, "follow up separately" moves it to Worth Knowing marked follow up, "drop" removes it. Restate the verdict only if it changed.
     - Run `~/.claude/bin/mc resolve <runId> <id> "<what changed in the report>"` for each decision.
     - Wait again while anything is still open; when nothing is, run `~/.claude/bin/mc done <runId>`. On `TIMEOUT`, start the wait once more.
+    - "QUESTION from Thinh": answer with `~/.claude/bin/mc reply <runId> <id> "<answer>"` (add `--question` to restate it), keep it open and wait again.
 
 Model choices for the peer seats come from the benchmark in `~/.claude/skills/model-bench/results.md`; rerun `/model-bench` when a new model ships.
 

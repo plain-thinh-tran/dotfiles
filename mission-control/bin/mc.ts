@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, openSync, watch } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { downloadMissingAvatars } from '../src/avatarFiles';
-import { threadPrompt, waitBlock } from '../src/prompt';
+import { isAwaitingPickup, threadPrompt, waitBlock } from '../src/prompt';
 import {
   clearStep,
   ensureRunsDir,
@@ -18,11 +18,12 @@ import {
   writeRun,
   writeStep,
 } from '../src/store';
-import type { Run, Session } from '../src/types';
+import type { Run, Session, Todo } from '../src/types';
 
 const DEFAULT_WAIT_MINUTES = 240;
 const POLL_INTERVAL_MS = 1000;
 const SERVER_PROBE_MS = 500;
+const SERVER_START_MS = 8000;
 const SERVER_PATH = join(import.meta.dir, '../src/server.ts');
 const SLACK_NOTIFY = join(homedir(), '.claude/skills/ping/scripts/slack-notify.sh');
 
@@ -137,20 +138,26 @@ function parseTimeoutMinutes(args: string[]): number {
   return minutes;
 }
 
-async function pickUpSubmitted(runId: string): Promise<{ run: Run; pickedIds: string[] } | null> {
+async function pickUpSubmitted(runId: string): Promise<{ run: Run; picked: Todo[] } | null> {
   const current = readRun(runId);
-  if (current === null || !current.todos.some((todo) => todo.state === 'submitted')) return null;
-  const pickedIds: string[] = [];
+  if (current === null || !current.todos.some(isAwaitingPickup)) return null;
+  const picked: Todo[] = [];
   const at = new Date().toISOString();
   const run = await updateRun(runId, (target) => {
-    target.todos.forEach((todo) => {
-      if (todo.state !== 'submitted') return;
+    target.todos.filter(isAwaitingPickup).forEach((todo) => {
+      picked.push(structuredClone(todo));
+      if (todo.answer?.question === true) {
+        todo.conversation = [...(todo.conversation ?? []), { from: 'thinh', text: todo.answer.text, at }];
+        todo.answer = null;
+        todo.state = 'open';
+        todo.submittedAt = null;
+        return;
+      }
       todo.state = 'picked_up';
       todo.pickedUpAt = at;
-      pickedIds.push(todo.id);
     });
   });
-  return run === null ? null : { run, pickedIds };
+  return run === null ? null : { run, picked };
 }
 
 function wait(runId: string, timeoutMinutes: number): Promise<number> {
@@ -180,8 +187,7 @@ function wait(runId: string, timeoutMinutes: number): Promise<number> {
       try {
         const picked = await pickUpSubmitted(runId);
         if (picked === null) return;
-        const todos = picked.run.todos.filter((todo) => picked.pickedIds.includes(todo.id));
-        finish(waitBlock(picked.run, todos), 0);
+        finish(waitBlock(picked.run, picked.picked), 0);
       } finally {
         checking = false;
       }
@@ -203,6 +209,39 @@ async function resolveTodo(args: string[]): Promise<void> {
   });
   if (run === null || !run.todos.some((t) => t.id === todoId)) fail(`Todo not found: ${runId}/${todoId}`);
   console.log(`Resolved ${runId}/${todoId}`);
+}
+
+async function reply(args: string[]): Promise<void> {
+  const newQuestion = flagValue(args, '--question');
+  const positional = args.filter((arg, index) => arg !== '--question' && args[index - 1] !== '--question');
+  const [runId, todoId, ...words] = positional;
+  const text = words.join(' ').trim();
+  if (runId === undefined || todoId === undefined || text === '') {
+    fail('Usage: mc reply <runId> <todoId> "<text>" [--question "<new question text>"]');
+  }
+  const run = await updateRun(runId, (target) => {
+    const todo = target.todos.find((t) => t.id === todoId);
+    if (todo === undefined) return;
+    todo.conversation = [...(todo.conversation ?? []), { from: 'agent', text, at: new Date().toISOString() }];
+    if (newQuestion !== undefined) todo.question = newQuestion;
+  });
+  if (run === null || !run.todos.some((t) => t.id === todoId)) fail(`Todo not found: ${runId}/${todoId}`);
+  console.log(`Replied on ${runId}/${todoId}`);
+}
+
+async function openApp(): Promise<void> {
+  await ensureServer();
+  const url = `http://localhost:${serverPort()}`;
+  const deadline = Date.now() + SERVER_START_MS;
+  while (Date.now() < deadline) {
+    try {
+      await fetch(`${url}/api/threads`, { signal: AbortSignal.timeout(SERVER_PROBE_MS) });
+      break;
+    } catch {
+      await Bun.sleep(150);
+    }
+  }
+  await Bun.spawn(['open', url], { stdio: ['ignore', 'ignore', 'ignore'] }).exited;
 }
 
 async function markDone(args: string[]): Promise<void> {
@@ -267,6 +306,12 @@ async function main(): Promise<number> {
     case 'done':
       await markDone(args);
       return 0;
+    case 'reply':
+      await reply(args);
+      return 0;
+    case 'open':
+      await openApp();
+      return 0;
     case 'step':
       await step(args);
       return 0;
@@ -276,7 +321,7 @@ async function main(): Promise<number> {
       printPrompt(args);
       return 0;
     default:
-      return fail('Usage: mc <serve|push|wait|resolve|done|prompt|step|avatars> ...');
+      return fail('Usage: mc <serve|open|push|wait|reply|resolve|done|prompt|step|avatars> ...');
   }
 }
 

@@ -63,6 +63,8 @@ Decisions the user owns go through Mission Control, not the chat. Write `<dir>/m
 
 Push it with `~/.claude/bin/mc push <dir>/mc.json`. Key decisions arrive pre-answered with your ruling, so the user only acts to override. When you must wait, start `~/.claude/bin/mc wait avengers-<slug>` with `run_in_background` and end the turn. When it prints decisions, update `design.md` (record the user's call in Decisions), run `~/.claude/bin/mc resolve avengers-<slug> <id> "<what changed>"` for each, and continue. Run `~/.claude/bin/mc done avengers-<slug>` after the report.
 
+When the wait prints decisions, a "QUESTION from Thinh" line means answer it with `~/.claude/bin/mc reply <runId> <id> "<answer>"` (add `--question "<clearer question>"` when the question itself was unclear), keep the decision open and wait again.
+
 ## Council Failures
 
 `council.sh` prints each member's output path or a FAILED line with its log tail. If one member fails, rerun once; if it fails again, hold the meeting with whoever answered and say in the report which seat was empty. If both fail, stop and show the user the logs. A missing Cursor CLI installs with `curl https://cursor.com/install -fsS | bash`.

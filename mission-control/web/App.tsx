@@ -1,9 +1,10 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
-import { chosenLabel, optionsFor } from '../src/prompt';
+import { chosenLabel, isAwaitingPickup, isReadyToSubmit, optionsFor } from '../src/prompt';
 import type { Agent, LiveState, Option, Run, Thread, Todo, TodoState } from '../src/types';
 import { Avatar, AvatarStack } from './Avatar';
 import { unseenCount, useNewTodos, usePresence } from './activity';
+import { Conversation } from './Conversation';
 import { Diff } from './Diff';
 import { History } from './History';
 import { prefersReducedMotion, useTypewriter } from './motion';
@@ -18,14 +19,14 @@ export type Tab = 'open' | 'progress' | 'all';
 type View = 'overview' | 'decision';
 type Draft = { optionId: string | null; text: string };
 type Entry = { run: Run; todo: Todo };
-type Busy = { kind: 'save' | 'accept'; status: 'saving' | 'saved' };
+type Busy = { kind: 'save' | 'accept' | 'ask'; status: 'saving' | 'saved' };
 type Undo = () => Promise<string | null>;
 type Ghost = { entry: Entry; index: number };
 
-const TABS: { id: Tab; label: string; states: TodoState[] | null }[] = [
-  { id: 'open', label: 'Open', states: ['open', 'answered'] },
-  { id: 'progress', label: 'In progress', states: ['submitted', 'picked_up'] },
-  { id: 'all', label: 'All', states: null },
+const TABS: { id: Tab; label: string }[] = [
+  { id: 'open', label: 'Open' },
+  { id: 'progress', label: 'In progress' },
+  { id: 'all', label: 'All' },
 ];
 
 const SECTION_LABEL: Record<Tab, string> = {
@@ -102,8 +103,7 @@ function todoPath(entry: Entry): string {
 }
 
 function matchesTab(todo: Todo, tab: Tab): boolean {
-  const states = TABS.find((t) => t.id === tab)?.states ?? null;
-  return states === null || states.includes(todo.state);
+  return tab === 'all' || tabOf(todo) === tab;
 }
 
 function entriesOf(thread: Thread, tab: Tab): Entry[] {
@@ -115,8 +115,10 @@ function isNeedsYou(entry: Entry): boolean {
   return entry.todo.category === 'needs-you';
 }
 
-function tabFor(todo: Todo): Tab {
-  return TABS.find((t) => t.states?.includes(todo.state))?.id ?? 'all';
+function tabOf(todo: Todo): Tab {
+  if (todo.state === 'open' || isReadyToSubmit(todo)) return 'open';
+  if (isAwaitingPickup(todo) || todo.state === 'picked_up') return 'progress';
+  return 'all';
 }
 
 function useLeaving(entries: Entry[], allEntries: Entry[], scope: string): { ghosts: Ghost[]; glowTab: Tab | null } {
@@ -135,7 +137,7 @@ function useLeaving(entries: Entry[], allEntries: Entry[], scope: string): { gho
     setTimeout(() => setGhosts((existing) => existing.filter((g) => !removed.includes(g))), LEAVE_MS);
     const moved = allEntries.find((e) => todoKey(e) === todoKey((removed[0] as Ghost).entry));
     if (moved === undefined) return;
-    setGlowTab(tabFor(moved.todo));
+    setGlowTab(tabOf(moved.todo));
     setTimeout(() => setGlowTab(null), GLOW_MS);
   }, [signature, scope]);
   return { ghosts, glowTab };
@@ -373,6 +375,7 @@ function CouncilIcon({ title }: { title?: string }) {
 function answerExcerpt(todo: Todo): string | null {
   const answer = todo.answer;
   if (answer === null || todo.state !== 'answered') return null;
+  if (answer.question === true) return `Asking: ${answer.text.trim().split('\n')[0] ?? ''}`;
   if (answer.deferred) return 'Deferred';
   if (answer.optionId !== null) return optionsFor(todo).find((o) => o.id === answer.optionId)?.label ?? answer.optionId;
   const note = answer.text.trim().split('\n')[0] ?? '';
@@ -495,6 +498,8 @@ function TodoRow(props: { entry: Entry; selected: boolean; showRun: boolean; lea
   const { entry, selected, showRun, onSelect } = props;
   const { todo, run } = entry;
   const excerpt = answerExcerpt(todo);
+  const messages = todo.conversation ?? [];
+  const unread = messages[messages.length - 1]?.from === 'agent' ? messages.length : 0;
   return (
     <button className="todo-row" data-selected={selected} data-state={todo.state} data-leaving={props.leaving} onClick={onSelect}>
       <span className="todo-icon">
@@ -503,6 +508,14 @@ function TodoRow(props: { entry: Entry; selected: boolean; showRun: boolean; lea
       <span className="todo-body">
         <span className="todo-head">
           <span className="todo-title">{todo.title}</span>
+          {unread > 0 ? (
+            <span className="chat-count" title="The agent replied">
+              <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+                <path d="M2 2.5 H10 V8 H6.2 L4 10 V8 H2 Z" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
+              </svg>
+              {unread}
+            </span>
+          ) : null}
           <span className="todo-id mono">{todo.id}</span>
         </span>
         {excerpt !== null ? <span className="todo-answer">→ {excerpt}</span> : null}
@@ -766,13 +779,12 @@ type DetailProps = {
   onDraft: (patch: Partial<Draft>) => void;
   onAccept: () => void;
   onSave: () => void;
-  onDefer: () => void;
-  onDismiss: () => void;
+  onAsk: () => void;
   onReopen: () => void;
   onCopy: (text: string) => void;
 };
 
-function AsyncLabel({ status, idle }: { status: Busy['status'] | undefined; idle: string }) {
+function AsyncLabel({ status, idle, done = '✓ Saved' }: { status: Busy['status'] | undefined; idle: string; done?: string }) {
   if (status === 'saving') {
     return (
       <>
@@ -781,7 +793,7 @@ function AsyncLabel({ status, idle }: { status: Busy['status'] | undefined; idle
       </>
     );
   }
-  return <>{status === 'saved' ? '✓ Saved' : idle}</>;
+  return <>{status === 'saved' ? done : idle}</>;
 }
 
 function AnswerBar(props: DetailProps) {
@@ -791,9 +803,6 @@ function AnswerBar(props: DetailProps) {
     content = (
       <div className="answer-actions">
         <span className="answer-status">Dismissed</span>
-        <button className="btn" onClick={props.onReopen}>
-          Reopen
-        </button>
       </div>
     );
   } else if (!isEditable(todo)) {
@@ -824,11 +833,14 @@ function AnswerBar(props: DetailProps) {
                 Reopen
               </button>
             ) : null}
-            <button className="btn" onClick={props.onDismiss}>
-              Dismiss
-            </button>
-            <button className="btn" onClick={props.onDefer}>
-              Defer
+            <button
+              className="btn btn-async"
+              data-status={props.busy?.kind === 'ask' ? props.busy.status : undefined}
+              disabled={props.draft.text.trim() === '' || props.busy !== null}
+              title="Send your note as a question instead of an answer"
+              onClick={props.onAsk}
+            >
+              <AsyncLabel status={props.busy?.kind === 'ask' ? props.busy.status : undefined} idle="Ask the agent" done="✓ Asked" />
             </button>
             <button
               className="btn btn-primary btn-async"
@@ -875,6 +887,7 @@ function DetailPane(props: DetailProps) {
           <Lifecycle state={todo.state} />
         </header>
         {todo.question !== '' ? <QuestionText text={todo.question} /> : null}
+        {todo.conversation !== undefined && todo.conversation.length > 0 ? <Conversation messages={todo.conversation} agents={agents} /> : null}
         {options.length > 0 ? (
           <section>
             <h3>Options</h3>
@@ -1026,25 +1039,15 @@ export function App() {
     }
   }
 
-  async function reopenEntry(target: Entry): Promise<string | null> {
-    setDrafts((prev) => ({ ...prev, [todoKey(target)]: { optionId: null, text: '' } }));
-    await perform(`${todoPath(target)}/reopen`);
-    return null;
-  }
-
-  async function answer(next: Draft, deferred: boolean, kind: 'save' | 'accept' | 'defer'): Promise<void> {
+  async function answer(next: Draft, kind: 'save' | 'accept' | 'ask'): Promise<void> {
     if (entry === null || entryKey === null) return;
     const target = entry;
     const targetKey = entryKey;
-    setDrafts((prev) => ({ ...prev, [targetKey]: next }));
-    if (kind !== 'defer') setBusy({ kind, status: 'saving' });
-    const ok = await perform(`${todoPath(target)}/answer`, { optionId: next.optionId, text: next.text, deferred });
+    setDrafts((prev) => ({ ...prev, [targetKey]: kind === 'ask' ? { optionId: null, text: '' } : next }));
+    setBusy({ kind, status: 'saving' });
+    const body = { optionId: next.optionId, text: next.text, deferred: false, ...(kind === 'ask' ? { question: true } : {}) };
+    const ok = await perform(`${todoPath(target)}/answer`, body);
     if (!ok) return setBusy(null);
-    if (kind === 'defer') {
-      announce(`${target.todo.id} deferred`, () => reopenEntry(target));
-      selectNextOpen();
-      return;
-    }
     setBusy({ kind, status: 'saved' });
     await new Promise((resolve) => setTimeout(resolve, prefersReducedMotion() ? 0 : SAVED_MS));
     setBusy(null);
@@ -1055,28 +1058,21 @@ export function App() {
     if (entry === null || busy !== null) return;
     const { recommendation } = entry.todo;
     if (recommendation === null) return;
-    await answer({ optionId: recommendation.optionId ?? null, text: '' }, false, 'accept');
+    await answer({ optionId: recommendation.optionId ?? null, text: '' }, 'accept');
   }
 
   async function save(): Promise<void> {
-    if (draft !== null && busy === null && canSave(draft)) await answer(draft, false, 'save');
+    if (draft !== null && busy === null && canSave(draft)) await answer(draft, 'save');
   }
 
-  async function defer(): Promise<void> {
-    if (draft !== null && busy === null) await answer({ optionId: null, text: draft.text }, true, 'defer');
-  }
-
-  async function dismiss(): Promise<void> {
-    if (entry === null) return;
-    const target = entry;
-    const ok = await perform(`${todoPath(target)}/dismiss`);
-    if (!ok) return;
-    announce(`${target.todo.id} dismissed`, () => reopenEntry(target));
-    selectNextOpen();
+  async function ask(): Promise<void> {
+    if (draft !== null && busy === null && draft.text.trim() !== '') await answer({ optionId: null, text: draft.text }, 'ask');
   }
 
   async function reopen(): Promise<void> {
-    if (entry !== null) await reopenEntry(entry);
+    if (entry === null || entryKey === null) return;
+    setDrafts((prev) => ({ ...prev, [entryKey]: { optionId: null, text: '' } }));
+    await perform(`${todoPath(entry)}/reopen`);
   }
 
   async function unsubmit(sessionId: string, submissionIds: string[]): Promise<string | null> {
@@ -1129,7 +1125,7 @@ export function App() {
   function openTodo(key: string): void {
     const target = allEntries.find((e) => todoKey(e) === key);
     if (target !== undefined && !matchesTab(target.todo, tab)) {
-      setTab(TABS.find((t) => t.states?.includes(target.todo.state))?.id ?? 'all');
+      setTab(tabOf(target.todo));
     }
     selectTodo(key);
   }
@@ -1164,8 +1160,6 @@ export function App() {
       actions.push({ id: 'accept', title: 'Accept recommendation', subtitle: entry.todo.title, shortcut: 'a', run: () => void accept() });
     }
     if (editable) {
-      actions.push({ id: 'defer', title: 'Defer', subtitle: entry?.todo.title ?? '', shortcut: 'd', run: () => void defer() });
-      actions.push({ id: 'dismiss', title: 'Dismiss', subtitle: entry?.todo.title ?? '', run: () => void dismiss() });
     }
     if (thread !== null && thread.answeredCount > 0) {
       actions.push({
@@ -1237,7 +1231,6 @@ export function App() {
     else if (/^[1-9]$/.test(event.key)) pickOption(Number(event.key) - 1);
     else if (event.key === 'a' && editable) void accept();
     else if (event.key === 's' && editable) void save();
-    else if (event.key === 'd' && editable) void defer();
   };
 
   useEffect(() => {
@@ -1293,8 +1286,7 @@ export function App() {
               onDraft={patchDraft}
               onAccept={() => void accept()}
               onSave={() => void save()}
-              onDefer={() => void defer()}
-              onDismiss={() => void dismiss()}
+              onAsk={() => void ask()}
               onReopen={() => void reopen()}
               onCopy={(text) => void copyText(text, 'Copied')}
               busy={busy}
