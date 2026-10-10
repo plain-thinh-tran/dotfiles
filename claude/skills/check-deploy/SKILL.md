@@ -29,9 +29,9 @@ Done when every changed runtime path maps to a service in `services.txt` or is i
 One read-only probe per changed behaviour in `<ctx>/checks/NN-name.sh`. A check is deterministic: same prod state, same answer.
 
 - First line `# phase: prod` (runs once prod-uk aliases are promoted) or `# phase: always`.
-- Exit 0 for pass, non-zero for fail. The last stdout line is the evidence shown in reports.
+- Exit 0 for pass, 75 for warm (too early to judge, e.g. traffic still building up), anything else for fail. A warm check is not a failure, but the tick does not count as clean. The last stdout line is the evidence shown in reports.
 - The runner provides `AWS_PROFILE=prod-uk-claude-read-only`, `AWS_REGION`, `PROD_START_MS`, `PROD_DONE_MS`, `CTX`, and `$DD` (`$DD logs-count '<query>' <since-ms>`, `$DD errors <env> <since-ms>`).
-- Cover three angles: the resources or config the PR adds exist and are wired; the changed path carries traffic; its failure sinks (DLQs, error metrics, error logs) stay empty. Give traffic checks a warm-up window instead of failing straight after deploy.
+- Cover three angles: the resources or config the PR adds exist and are wired; the changed path carries traffic; its failure sinks (DLQs, error metrics, error logs) stay empty. Traffic checks exit 75 during their warm-up window instead of failing straight after deploy.
 
 Run each check once by hand (`bash <check>` with those variables set) before watching. A check that fails on a typo or a permission is a broken check: fix it now. `examples/pr-11513/` is a worked set (ingest queues wired, DLQs empty, traffic flowing, no Lambda errors).
 
@@ -39,13 +39,13 @@ Done when every behaviour from step 1 has a check and every check runs cleanly b
 
 ## 3. Watch
 
-Start `scripts/watch.sh <ctx>` with the Monitor tool (`timeout_ms: 1800000`), and re-arm it on expiry until the script exits. Every 60s it runs `tick.py`, which checks:
+Start `scripts/watch.sh <ctx>` with the Monitor tool (`timeout_ms: 1800000`). It exits 12 with a `REARM` line before the Monitor's 30 minute cap; start it again each time until it exits 10 or 11. Every 60s it runs `tick.py`, which checks:
 
 - **Pipeline**: the `deploy.yml` run that contains the merge commit (it follows a newer run if this one is cancelled).
 - **Datadog Error Tracking**: prod-uk issues first seen since the prod deploy started, or first seen at the deployed commit, split into ours (`services.txt`) and other.
 - **Checks**: every script in `checks/`.
 
-A tick prints only when something changed. `ATTENTION` lines appear once per new problem. Exit 10 is done and healthy: prod-uk deployed at least 15 minutes ago, run green, 3 clean ticks in a row. Exit 11 means the deploy run failed.
+A tick prints only when something changed. `ATTENTION` lines appear once per new problem. Exit 10 is done and healthy: prod-uk deployed at least 15 minutes ago, run green, 3 clean ticks in a row (every check PASS, no new errors). Exit 11 means the deploy run failed.
 
 ## 4. Act on ATTENTION
 

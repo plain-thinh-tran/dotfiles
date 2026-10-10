@@ -3,6 +3,7 @@
 # One deterministic round: pipeline, Datadog Error Tracking, PR checks.
 # Prints a status block; "ATTENTION ..." lines appear once per new problem.
 # Exit: 0 keep watching, 10 done and healthy, 11 deploy run failed.
+# A check exiting 75 is WARM (not ready to judge yet): not a failure, but the tick is not clean.
 import fnmatch
 import glob
 import json
@@ -111,7 +112,7 @@ for path in sorted(glob.glob(os.path.join(ctx, "checks", "*.sh"))):
     try:
         out = subprocess.run(["bash", path], capture_output=True, text=True, env=env, timeout=CHECK_TIMEOUT)
         evidence = (out.stdout.strip().splitlines() or [out.stderr.strip()[:200]])[-1][:200]
-        result = "PASS" if out.returncode == 0 else "FAIL"
+        result = {0: "PASS", 75: "WARM"}.get(out.returncode, "FAIL")
     except subprocess.TimeoutExpired:
         result, evidence = "FAIL", f"timed out after {CHECK_TIMEOUT}s"
     check_results.append((name, result, evidence))
@@ -120,7 +121,7 @@ for path in sorted(glob.glob(os.path.join(ctx, "checks", "*.sh"))):
 
 state["alerted"] = [k for k in state["alerted"] if not k.startswith("check:") or k in current_keys]
 
-clean = not run["failed"] and flagged_ours == 0 and flagged_other == 0 and all(r != "FAIL" for _, r, _ in check_results)
+clean = not run["failed"] and flagged_ours == 0 and flagged_other == 0 and all(r in ("PASS", "WAIT") for _, r, _ in check_results)
 state["clean_streak"] = state["clean_streak"] + 1 if (clean and run["prod_done_ms"]) else 0
 
 print(f"TICK {time.strftime('%H:%M')} run {state['run_id']} {run['status']} {run['conclusion']} stage={stage} clean={state['clean_streak']}/{CLEAN_TICKS}")

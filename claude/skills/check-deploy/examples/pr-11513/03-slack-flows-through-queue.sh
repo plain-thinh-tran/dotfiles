@@ -4,7 +4,7 @@
 set -uo pipefail
 since=$(( PROD_DONE_MS / 1000 ))
 now=$(date +%s)
-if (( now - since < 600 )); then echo "warming up ($(( (now - since) / 60 )) of 10 min)"; exit 0; fi
+if (( now - since < 600 )); then echo "warming up ($(( (now - since) / 60 )) of 10 min)"; exit 75; fi
 start=$(date -u -r "$since" +%Y-%m-%dT%H:%M:%SZ); end=$(date -u -r "$now" +%Y-%m-%dT%H:%M:%SZ)
 sent=$(aws cloudwatch get-metric-statistics --namespace AWS/SQS --metric-name NumberOfMessagesSent \
   --dimensions Name=QueueName,Value=prod-uk-services-SlackWebhookHandlerMessageGrouperServiceQueue \
