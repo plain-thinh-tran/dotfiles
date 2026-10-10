@@ -98,6 +98,10 @@ All agents share one Chrome on port 9222 (`~/.claude/bin/chrome-agents` starts i
 - Close your tabs when done
 - Need a different login than the shared profile? Pass `isolatedContext` to `new_page`
 
+## Plan Feedback
+
+When a plan comes back from the plan annotator with review comments, the revised plan must end with an `## Applied Feedback` section: one line per comment, keyed by its `id`, saying what changed or why it was not changed. Never drop a comment silently.
+
 ## Code style preferences
 
 - **Never add comments to code** unless the user explicitly asks for them. Code should be self-explanatory.

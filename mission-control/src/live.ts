@@ -1,32 +1,62 @@
 import { Database } from 'bun:sqlite';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { groupRunsBySession } from './store';
+import { type ConductorNames, type LiveInfo, groupRunsBySession } from './store';
 import type { LiveState, Run } from './types';
 
-const CONDUCTOR_DB = join(homedir(), 'Library/Application Support/com.conductor.app/conductor.db');
+const CONDUCTOR_DB =
+  process.env.MC_CONDUCTOR_DB ?? join(homedir(), 'Library/Application Support/com.conductor.app/conductor.db');
 const WAIT_PATTERN = /(?:mc|mc\.ts) wait (\S+)/g;
 
 type Process = { pid: number; command: string };
 
-function dbStatuses(sessionIds: string[]): Map<string, string> {
-  const statuses = new Map<string, string>();
-  if (sessionIds.length === 0) return statuses;
+type SessionRow = {
+  id: string;
+  status: string;
+  title: string | null;
+  workspace_name: string | null;
+  user_set_workspace_name: number | null;
+  pr_title: string | null;
+  branch: string | null;
+};
+
+type ConductorSession = { status: string; names: ConductorNames };
+
+function toConductorSession(row: SessionRow): ConductorSession {
+  return {
+    status: row.status,
+    names: {
+      workspaceName: row.workspace_name ?? '',
+      userSetName: row.user_set_workspace_name === 1,
+      prTitle: row.pr_title ?? '',
+      branch: row.branch ?? '',
+      title: row.title ?? '',
+    },
+  };
+}
+
+function conductorSessions(sessionIds: string[]): Map<string, ConductorSession> {
+  const sessions = new Map<string, ConductorSession>();
+  if (sessionIds.length === 0) return sessions;
   try {
     const db = new Database(CONDUCTOR_DB, { readonly: true });
     try {
       const marks = sessionIds.map(() => '?').join(',');
       const rows = db
-        .query<{ id: string; status: string }, string[]>(`select id, status from sessions where id in (${marks})`)
+        .query<SessionRow, string[]>(
+          `select s.id, s.status, s.title, w.workspace_name, w.user_set_workspace_name, w.pr_title, w.branch
+           from sessions s left join workspaces w on w.local_id = s.workspace_id
+           where s.id in (${marks})`,
+        )
         .all(...sessionIds);
-      rows.forEach((row) => statuses.set(row.id, row.status));
+      rows.forEach((row) => sessions.set(row.id, toConductorSession(row)));
     } finally {
       db.close();
     }
   } catch {
-    return statuses;
+    return sessions;
   }
-  return statuses;
+  return sessions;
 }
 
 async function run(cmd: string[]): Promise<string> {
@@ -74,18 +104,22 @@ function resolveState(
   return alive ? 'idle' : 'dead';
 }
 
-export async function computeLiveStates(runs: Run[]): Promise<Map<string, LiveState>> {
+export async function computeLiveInfo(runs: Run[]): Promise<Map<string, LiveInfo>> {
   const groups = groupRunsBySession(runs);
-  const statuses = dbStatuses([...groups.keys()]);
+  const sessions = conductorSessions([...groups.keys()]);
   const processes = await listProcesses();
   const claudePids = processes.filter((p) => p.command.includes('/claude')).map((p) => p.pid);
   const aliveCwds = await cwdsOf(claudePids);
   const waits = pendingWaits(processes);
-  const states = new Map<string, LiveState>();
+  const infos = new Map<string, LiveInfo>();
   groups.forEach((group, sessionId) => {
     const waitPending = group.some((r) => waits.has(r.runId));
     const alive = aliveCwds.has((group[0] as Run).session.workspacePath);
-    states.set(sessionId, resolveState(statuses.get(sessionId), waitPending, alive));
+    const session = sessions.get(sessionId);
+    infos.set(sessionId, {
+      state: resolveState(session?.status, waitPending, alive),
+      names: session?.names ?? null,
+    });
   });
-  return states;
+  return infos;
 }

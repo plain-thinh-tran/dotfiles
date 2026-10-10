@@ -60,6 +60,8 @@ export type Todo = {
   submittedAt: string | null;
   pickedUpAt: string | null;
   resolution: string | null;
+  doneAt?: string;
+  diffs?: { path: string; patch: string }[];
 };
 
 export type Session = {
@@ -76,6 +78,7 @@ export type Run = {
   runId: string;
   skill: string;
   title: string;
+  summary?: string;
   status: 'active' | 'done';
   createdAt: string;
   updatedAt: string;
@@ -90,7 +93,13 @@ export type LiveState = 'working' | 'waiting_on_you' | 'idle' | 'dead' | 'error'
 export type Thread = {
   sessionId: string;
   session: Session;
+  archived: boolean;
+  displayName: string;
+  description: string;
+  summary: string;
   live: LiveState;
+  step: { text: string; at: string; agent: string | null } | null;
+  steps: { text: string; at: string; agent: string | null }[];
   agents: Agent[];
   runs: Run[];
   openCount: number;

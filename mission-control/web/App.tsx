@@ -1,19 +1,38 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import type { ReactNode } from 'react';
+import type { CSSProperties, ReactNode } from 'react';
 import { chosenLabel, optionsFor } from '../src/prompt';
 import type { Agent, LiveState, Option, Run, Thread, Todo, TodoState } from '../src/types';
 import { Avatar, AvatarStack } from './Avatar';
+import { unseenCount, useNewTodos, usePresence } from './activity';
+import { Diff } from './Diff';
+import { History } from './History';
+import { prefersReducedMotion, useTypewriter } from './motion';
+import { Overview } from './Overview';
+import { Palette } from './Palette';
+import type { PaletteItem } from './Palette';
+import { Snackbar } from './Snackbar';
+import type { SnackState } from './Snackbar';
+import { Dock, TeamPane } from './Team';
 
-type Tab = 'open' | 'sent' | 'done' | 'all';
+export type Tab = 'open' | 'progress' | 'all';
+type View = 'overview' | 'decision';
 type Draft = { optionId: string | null; text: string };
 type Entry = { run: Run; todo: Todo };
+type Busy = { kind: 'save' | 'accept'; status: 'saving' | 'saved' };
+type Undo = () => Promise<string | null>;
+type Ghost = { entry: Entry; index: number };
 
 const TABS: { id: Tab; label: string; states: TodoState[] | null }[] = [
   { id: 'open', label: 'Open', states: ['open', 'answered'] },
-  { id: 'sent', label: 'Sent', states: ['submitted', 'picked_up'] },
-  { id: 'done', label: 'Done', states: ['done', 'dismissed'] },
+  { id: 'progress', label: 'In progress', states: ['submitted', 'picked_up'] },
   { id: 'all', label: 'All', states: null },
 ];
+
+const SECTION_LABEL: Record<Tab, string> = {
+  open: 'Needs you',
+  progress: 'In progress',
+  all: 'All',
+};
 
 const STATE_LABEL: Record<TodoState, string> = {
   open: 'Open',
@@ -32,21 +51,38 @@ const LIVE_LABEL: Record<LiveState, string> = {
   error: 'error',
 };
 
-const KIND_LABEL = { decision: 'Decision', question: 'Question', approval: 'Approval' } as const;
-const CATEGORY_LABEL = { 'needs-you': 'Needs you', 'key-decision': 'Key decision' } as const;
+const LIFECYCLE_STAGES = ['Open', 'Answered', 'Sent', 'Picked up', 'Done'];
+const LIFECYCLE_INDEX: Record<TodoState, number> = { open: 0, answered: 1, submitted: 2, picked_up: 3, done: 4, dismissed: -1 };
+const CONFIRM_MS = 2500;
+const SNACK_MS = 5000;
+const LEAVE_MS = 250;
+const GLOW_MS = 600;
+const SAVED_MS = 1200;
+const COUNCIL_TOOLTIP = 'Council pick, override before Submit';
 const FLASH_MS = 1800;
 const LOCATION_LINE = /^[\w-]+ at \S+/;
 
-function useThreads(showDone: boolean): Thread[] | null {
+function useThreads(showArchived: boolean): Thread[] | null {
   const [threads, setThreads] = useState<Thread[] | null>(null);
   useEffect(() => {
-    const source = new EventSource(`/api/events?done=${showDone ? 1 : 0}`);
+    const source = new EventSource(`/api/events?archived=${showArchived ? 1 : 0}`);
     source.addEventListener('threads', (event) => {
       setThreads(JSON.parse((event as MessageEvent<string>).data) as Thread[]);
     });
     return () => source.close();
-  }, [showDone]);
+  }, [showArchived]);
   return threads;
+}
+
+const NOW_TICK_MS = 30000;
+
+function useNow(): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), NOW_TICK_MS);
+    return () => clearInterval(timer);
+  }, []);
+  return now;
 }
 
 async function postJson(path: string, body?: unknown): Promise<Response> {
@@ -71,7 +107,52 @@ function matchesTab(todo: Todo, tab: Tab): boolean {
 }
 
 function entriesOf(thread: Thread, tab: Tab): Entry[] {
-  return thread.runs.flatMap((run) => run.todos.filter((todo) => matchesTab(todo, tab)).map((todo) => ({ run, todo })));
+  const all = thread.runs.flatMap((run) => run.todos.filter((todo) => matchesTab(todo, tab)).map((todo) => ({ run, todo })));
+  return [...all.filter(isNeedsYou), ...all.filter((entry) => !isNeedsYou(entry))];
+}
+
+function isNeedsYou(entry: Entry): boolean {
+  return entry.todo.category === 'needs-you';
+}
+
+function tabFor(todo: Todo): Tab {
+  return TABS.find((t) => t.states?.includes(todo.state))?.id ?? 'all';
+}
+
+function useLeaving(entries: Entry[], allEntries: Entry[], scope: string): { ghosts: Ghost[]; glowTab: Tab | null } {
+  const previous = useRef({ scope, entries });
+  const [ghosts, setGhosts] = useState<Ghost[]>([]);
+  const [glowTab, setGlowTab] = useState<Tab | null>(null);
+  const signature = entries.map((e) => `${todoKey(e)}:${e.todo.state}`).join('|');
+  useEffect(() => {
+    const before = previous.current;
+    previous.current = { scope, entries };
+    if (before.scope !== scope || prefersReducedMotion()) return;
+    const current = new Set(entries.map(todoKey));
+    const removed = before.entries.map((entry, index) => ({ entry, index })).filter(({ entry }) => !current.has(todoKey(entry)));
+    if (removed.length === 0) return;
+    setGhosts((existing) => [...existing, ...removed]);
+    setTimeout(() => setGhosts((existing) => existing.filter((g) => !removed.includes(g))), LEAVE_MS);
+    const moved = allEntries.find((e) => todoKey(e) === todoKey((removed[0] as Ghost).entry));
+    if (moved === undefined) return;
+    setGlowTab(tabFor(moved.todo));
+    setTimeout(() => setGlowTab(null), GLOW_MS);
+  }, [signature, scope]);
+  return { ghosts, glowTab };
+}
+
+function useCouncilOpen(sessionId: string): [boolean, () => void] {
+  const key = `mc-council-open:${sessionId}`;
+  const [open, setOpen] = useState(() => localStorage.getItem(key) === '1');
+  useEffect(() => {
+    setOpen(localStorage.getItem(key) === '1');
+  }, [key]);
+  function toggle(): void {
+    const next = !open;
+    localStorage.setItem(key, next ? '1' : '0');
+    setOpen(next);
+  }
+  return [open, toggle];
 }
 
 function initialDraft(todo: Todo): Draft {
@@ -102,6 +183,56 @@ function isTyping(target: EventTarget | null): boolean {
   return target instanceof HTMLElement && (target.tagName === 'TEXTAREA' || target.tagName === 'INPUT' || target.isContentEditable);
 }
 
+function Lifecycle({ state }: { state: TodoState }) {
+  const current = LIFECYCLE_INDEX[state];
+  if (current === -1) {
+    return (
+      <div className="lifecycle">
+        <div className="seg">
+          {LIFECYCLE_STAGES.map((stage) => (
+            <i key={stage} />
+          ))}
+        </div>
+        <div className="seglabels">
+          <span>Dismissed</span>
+        </div>
+      </div>
+    );
+  }
+  const finished = current === LIFECYCLE_STAGES.length - 1;
+  return (
+    <div className="lifecycle" aria-label={`Stage: ${LIFECYCLE_STAGES[current]}`}>
+      <div className="seg">
+        {LIFECYCLE_STAGES.map((stage, index) => (
+          <i key={stage} className={index < current || finished ? 'on' : index === current ? 'now' : undefined} />
+        ))}
+      </div>
+      <div className="seglabels">
+        {LIFECYCLE_STAGES.map((stage, index) => (
+          <span key={stage} data-current={index === current} data-finished={finished}>
+            {stage}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function SubmitConfirm({ name }: { name: string }) {
+  return (
+    <div className="submit-confirm">
+      <svg viewBox="0 0 48 48" aria-hidden="true">
+        <circle className="confirm-circle" cx="24" cy="24" r="21" />
+        <path className="confirm-tick" d="M15 24.5 L21.5 31 L33 18" />
+      </svg>
+      <div>
+        <b>Sent to {name}</b>
+        <div className="muted">The agent is waking up</div>
+      </div>
+    </div>
+  );
+}
+
 function StateIcon({ state }: { state: TodoState }) {
   const common = { width: 16, height: 16, viewBox: '0 0 16 16', fill: 'none', 'aria-label': STATE_LABEL[state] } as const;
   switch (state) {
@@ -109,47 +240,47 @@ function StateIcon({ state }: { state: TodoState }) {
       return (
         <svg {...common}>
           <title>{STATE_LABEL[state]}</title>
-          <circle cx="8" cy="8" r="6" stroke="#a0a0aa" strokeWidth="1.5" />
+          <circle cx="8" cy="8" r="6" stroke="#8b8b94" strokeWidth="1.5" />
         </svg>
       );
     case 'answered':
       return (
         <svg {...common}>
           <title>{STATE_LABEL[state]}</title>
-          <circle cx="8" cy="8" r="6" stroke="#3b82f6" strokeWidth="1.5" />
-          <circle cx="8" cy="8" r="3" fill="#3b82f6" />
+          <circle cx="8" cy="8" r="6" stroke="#4f8cff" strokeWidth="1.5" />
+          <circle cx="8" cy="8" r="3" fill="#4f8cff" />
         </svg>
       );
     case 'submitted':
       return (
         <svg {...common}>
           <title>{STATE_LABEL[state]}</title>
-          <circle cx="8" cy="8" r="6" stroke="#b7791f" strokeWidth="1.5" />
-          <path d="M8 4.8 V8 L10 9.4" stroke="#b7791f" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+          <circle cx="8" cy="8" r="6" stroke="#f5a524" strokeWidth="1.5" />
+          <path d="M8 4.8 V8 L10 9.4" stroke="#f5a524" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
       );
     case 'picked_up':
       return (
         <svg {...common}>
           <title>{STATE_LABEL[state]}</title>
-          <circle cx="8" cy="8" r="6" stroke="#7c3aed" strokeWidth="1.5" />
-          <path d="M5.2 8 H10.4 M8.4 5.8 L10.6 8 L8.4 10.2" stroke="#7c3aed" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+          <circle cx="8" cy="8" r="6" stroke="#a371f7" strokeWidth="1.5" />
+          <path d="M5.2 8 H10.4 M8.4 5.8 L10.6 8 L8.4 10.2" stroke="#a371f7" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
       );
     case 'done':
       return (
         <svg {...common}>
           <title>{STATE_LABEL[state]}</title>
-          <circle cx="8" cy="8" r="7" fill="#22a06b" />
-          <path d="M5 8.2 L7.1 10.3 L11 6" stroke="#fff" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+          <circle cx="8" cy="8" r="7" fill="#3fb950" />
+          <path d="M5 8.2 L7.1 10.3 L11 6" stroke="#0b0b0d" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
       );
     case 'dismissed':
       return (
         <svg {...common}>
           <title>{STATE_LABEL[state]}</title>
-          <circle cx="8" cy="8" r="6" stroke="#c4c4cc" strokeWidth="1.5" />
-          <path d="M5.4 8 H10.6" stroke="#c4c4cc" strokeWidth="1.5" strokeLinecap="round" />
+          <circle cx="8" cy="8" r="6" stroke="#5c5c66" strokeWidth="1.5" />
+          <path d="M5.4 8 H10.6" stroke="#5c5c66" strokeWidth="1.5" strokeLinecap="round" />
         </svg>
       );
   }
@@ -157,6 +288,27 @@ function StateIcon({ state }: { state: TodoState }) {
 
 function LiveDot({ state }: { state: LiveState }) {
   return <span className={`dot dot-${state}`} title={LIVE_LABEL[state]} />;
+}
+
+function LiveMark({ state }: { state: LiveState }) {
+  if (state !== 'working') return <LiveDot state={state} />;
+  return (
+    <span className="eq" title={LIVE_LABEL[state]}>
+      <i />
+      <i />
+      <i />
+    </span>
+  );
+}
+
+function StepLine({ text }: { text: string }) {
+  const { shown, typing } = useTypewriter(text);
+  return (
+    <>
+      {shown}
+      {typing ? <i className="caret" /> : null}
+    </>
+  );
 }
 
 function Chip({ className, title, children }: { className: string; title?: string; children: ReactNode }) {
@@ -205,8 +357,17 @@ function QuestionText({ text }: { text: string }) {
   );
 }
 
-function CouncilPick({ todo }: { todo: Todo }) {
-  return todo.answer?.preset === true ? <Chip className="council-pick">Council pick</Chip> : null;
+function CouncilIcon({ title }: { title?: string }) {
+  return (
+    <svg className="council-icon" width="14" height="14" viewBox="0 0 14 14" fill="none" aria-label="Council pick">
+      <title>{title ?? 'Council pick'}</title>
+      <g stroke="#a371f7" strokeWidth="1.2" fill="rgba(163,113,247,0.22)">
+        <circle cx="7" cy="4.6" r="3.4" />
+        <circle cx="4.3" cy="9.3" r="3.4" />
+        <circle cx="9.7" cy="9.3" r="3.4" />
+      </g>
+    </svg>
+  );
 }
 
 function answerExcerpt(todo: Todo): string | null {
@@ -223,179 +384,255 @@ function optionNumber(options: Option[], optionId: string | undefined): number |
   return index === -1 ? null : index + 1;
 }
 
-function TodoChips({ todo }: { todo: Todo }) {
+function ArchiveIcon() {
   return (
-    <>
-      <Chip className={`kind kind-${todo.kind}`}>{KIND_LABEL[todo.kind]}</Chip>
-      <Chip className={`category category-${todo.category}`}>{CATEGORY_LABEL[todo.category]}</Chip>
-    </>
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <path
+        d="M2 3.5 H14 V6.5 H2 Z M3 6.5 V12.5 Q3 13 3.5 13 H12.5 Q13 13 13 12.5 V6.5 M6.5 9.2 H9.5"
+        stroke="currentColor"
+        strokeWidth="1.3"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
   );
 }
 
-function ThreadRow({ thread, selected, onSelect }: { thread: Thread; selected: boolean; onSelect: () => void }) {
-  const { session } = thread;
-  const titles = thread.runs.filter((run) => run.status !== 'done' || thread.runs.every((r) => r.status === 'done')).slice(0, 3);
+function RestoreIcon() {
   return (
-    <button className="thread-row" data-selected={selected} onClick={onSelect}>
-      <div className="thread-top">
-        <LiveDot state={thread.live} />
-        <span className="thread-name">{session.workspaceName}</span>
-        {thread.answeredCount > 0 ? <span className="badge badge-ready">{thread.answeredCount} ready</span> : null}
-        {thread.openCount > 0 ? <span className="badge">{thread.openCount}</span> : null}
-      </div>
-      <div className="thread-sub">
-        {session.repo} · {session.branch === '' ? 'detached' : session.branch}
-      </div>
-      <div className="thread-runs">
-        {titles.map((run) => (
-          <div key={run.runId} className="thread-run-title">
-            {run.title}
-          </div>
-        ))}
-      </div>
-      <AvatarStack agents={thread.agents} size={24} />
-    </button>
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <path
+        d="M3 6.5 V12.5 Q3 13 3.5 13 H12.5 Q13 13 13 12.5 V6.5 M8 10.5 V3 M5.2 5.6 L8 2.8 L10.8 5.6"
+        stroke="currentColor"
+        strokeWidth="1.3"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function ThreadRow(props: { thread: Thread; selected: boolean; unseen: number; flashing: boolean; onSelect: () => void; onArchive: () => void }) {
+  const { thread, selected } = props;
+  const { session } = thread;
+  const branch = session.branch === '' ? 'detached' : session.branch;
+  const action = thread.archived ? 'Unarchive' : 'Archive';
+  return (
+    <div className="thread-item" data-archived={thread.archived} data-flash={props.flashing}>
+      <button
+        className="thread-row"
+        data-selected={selected}
+        title={`${session.repo} · ${branch} · ${session.workspaceName}`}
+        onClick={props.onSelect}
+      >
+        <div className="thread-top">
+          <LiveMark state={thread.live} />
+          <span className="thread-name">{thread.displayName}</span>
+          {props.unseen > 0 ? <span className="newpill">{props.unseen} new</span> : null}
+          {thread.answeredCount > 0 ? <span className="badge badge-ready">{thread.answeredCount} ready</span> : null}
+          {thread.openCount > 0 ? <span className="badge">{thread.openCount}</span> : null}
+        </div>
+        <div className="thread-desc">
+          {thread.live === 'working' && thread.step !== null ? <StepLine key={thread.step.text} text={thread.step.text} /> : thread.description}
+        </div>
+      </button>
+      <button className="icon-btn row-action" title={action} aria-label={action} onClick={props.onArchive}>
+        {thread.archived ? <RestoreIcon /> : <ArchiveIcon />}
+      </button>
+    </div>
   );
 }
 
 function ThreadsPane(props: {
   threads: Thread[];
   selectedId: string | null;
-  showDone: boolean;
-  onToggleDone: (value: boolean) => void;
+  now: number;
+  flashing: ReadonlySet<string>;
+  showArchived: boolean;
+  teamOpen: boolean;
+  onToggleArchived: () => void;
+  onToggleTeam: () => void;
+  onCloseTeam: () => void;
   onSelect: (sessionId: string) => void;
+  onArchive: (thread: Thread) => void;
 }) {
+  const online = props.threads.some((thread) => thread.live === 'working' || thread.live === 'waiting_on_you');
+  const firstArchived = props.threads.findIndex((thread) => thread.archived);
   return (
     <aside className="pane threads">
       <header className="pane-header">
         <h1>Mission Control</h1>
-        <label className="toggle">
-          <input type="checkbox" checked={props.showDone} onChange={(e) => props.onToggleDone(e.target.checked)} />
-          <span className="switch" />
-          <span>Show done</span>
-        </label>
       </header>
       <div className="pane-scroll">
         {props.threads.length === 0 ? <div className="empty">No sessions need you.</div> : null}
-        {props.threads.map((thread) => (
-          <ThreadRow
-            key={thread.sessionId}
-            thread={thread}
-            selected={thread.sessionId === props.selectedId}
-            onSelect={() => props.onSelect(thread.sessionId)}
-          />
+        {props.threads.map((thread, index) => (
+          <div key={thread.sessionId}>
+            {index === firstArchived ? <div className="section-label">Archived</div> : null}
+            <ThreadRow
+              thread={thread}
+              selected={thread.sessionId === props.selectedId}
+              unseen={unseenCount(thread, props.selectedId)}
+              flashing={props.flashing.has(thread.sessionId)}
+              onSelect={() => props.onSelect(thread.sessionId)}
+              onArchive={() => props.onArchive(thread)}
+            />
+          </div>
         ))}
       </div>
+      {props.teamOpen ? <TeamPane thread={props.threads.find((t) => t.sessionId === props.selectedId) ?? null} now={props.now} onClose={props.onCloseTeam} /> : null}
+      <Dock
+        showArchived={props.showArchived}
+        online={online}
+        teamOpen={props.teamOpen}
+        onToggleArchived={props.onToggleArchived}
+        onToggleTeam={props.onToggleTeam}
+      />
     </aside>
   );
 }
 
-function TodoRow({ entry, selected, onSelect }: { entry: Entry; selected: boolean; onSelect: () => void }) {
-  const { todo } = entry;
+function TodoRow(props: { entry: Entry; selected: boolean; showRun: boolean; leaving: boolean; onSelect: () => void }) {
+  const { entry, selected, showRun, onSelect } = props;
+  const { todo, run } = entry;
   const excerpt = answerExcerpt(todo);
   return (
-    <button className="todo-row" data-selected={selected} data-state={todo.state} onClick={onSelect}>
+    <button className="todo-row" data-selected={selected} data-state={todo.state} data-leaving={props.leaving} onClick={onSelect}>
       <span className="todo-icon">
         <StateIcon state={todo.state} />
       </span>
       <span className="todo-body">
-        <span className="todo-meta">
-          <TodoChips todo={todo} />
-          <CouncilPick todo={todo} />
-          <span className="muted mono todo-id">{todo.id}</span>
+        <span className="todo-head">
+          <span className="todo-title">{todo.title}</span>
+          <span className="todo-id mono">{todo.id}</span>
         </span>
-        <span className="todo-title">{todo.title}</span>
         {excerpt !== null ? <span className="todo-answer">→ {excerpt}</span> : null}
+        {showRun ? <span className="todo-run">{run.title}</span> : null}
       </span>
+    </button>
+  );
+}
+
+function CouncilRow(props: { entry: Entry; selected: boolean; leaving: boolean; onSelect: () => void }) {
+  const { entry, selected, onSelect } = props;
+  const { todo } = entry;
+  return (
+    <button className="council-row" data-selected={selected} data-state={todo.state} data-leaving={props.leaving} title={todo.title} onClick={onSelect}>
+      <span className="todo-icon">{todo.answer?.preset === true ? <CouncilIcon /> : <StateIcon state={todo.state} />}</span>
+      <span className="council-title">{todo.title}</span>
+      <span className="todo-id mono">{todo.id}</span>
     </button>
   );
 }
 
 type TodosPaneProps = {
   thread: Thread;
+  entries: Entry[];
+  ghosts: Ghost[];
+  glowTab: Tab | null;
   tab: Tab;
   selectedKey: string | null;
+  councilOpen: boolean;
+  onToggleCouncil: () => void;
   onTab: (tab: Tab) => void;
   onSelect: (key: string) => void;
+  confirming: boolean;
   onSubmit: () => void;
   onCopyPrompt: () => void;
-  onCopyPath: () => void;
-  onFocusConductor: () => void;
 };
 
 function TodosPane(props: TodosPaneProps) {
-  const { thread, tab } = props;
+  const { thread, tab, entries } = props;
   const dead = thread.live === 'dead';
   const count = thread.answeredCount;
-  const submitLabel = `Submit ${count} to ${thread.session.workspaceName}`;
-  const groups = thread.runs.map((run) => ({ run, entries: entriesOf({ ...thread, runs: [run] }, tab) })).filter((g) => g.entries.length > 0);
+  const shown = entries.map((entry) => ({ entry, leaving: false }));
+  [...props.ghosts]
+    .sort((a, b) => a.index - b.index)
+    .forEach((ghost) => shown.splice(Math.min(ghost.index, shown.length), 0, { entry: ghost.entry, leaving: true }));
+  const needs = shown.filter((row) => isNeedsYou(row.entry));
+  const council = shown.filter((row) => !isNeedsYou(row.entry));
+  const showRun = thread.runs.filter((r) => r.status === 'active').length > 1;
   return (
     <aside className="pane todos">
-      <header className="pane-header todos-header">
-        <div className="todos-title">
-          <span className="thread-name">{thread.session.workspaceName}</span>
-          <LiveDot state={thread.live} />
-          <span className="live-label muted">{LIVE_LABEL[thread.live]}</span>
-        </div>
-        <div className="workspace-path">
-          <span className="path-text mono" title={thread.session.workspacePath}>
-            <bdi>{thread.session.workspacePath}</bdi>
-          </span>
-          <button className="btn btn-small" onClick={props.onCopyPath}>
-            Copy path
-          </button>
-          <button className="btn btn-small" onClick={props.onFocusConductor}>
-            Focus Conductor
-          </button>
-        </div>
-        <div className="tabs" role="tablist">
+      <header className="pane-header">
+        <div className="tabs" role="tablist" style={{ '--i': TABS.findIndex((t) => t.id === tab) } as CSSProperties}>
+          <i className="tab-pill" />
           {TABS.map((t) => (
-            <button key={t.id} role="tab" aria-selected={t.id === tab} className="tab" onClick={() => props.onTab(t.id)}>
+            <button key={t.id} role="tab" aria-selected={t.id === tab} data-glow={t.id === props.glowTab} className="tab" onClick={() => props.onTab(t.id)}>
               {t.label}
             </button>
           ))}
         </div>
       </header>
-      <div className="pane-scroll">
-        {groups.length === 0 ? <div className="empty">Nothing here.</div> : null}
-        {groups.map(({ run, entries }) => (
-          <section key={run.runId} className="run-group">
-            <div className="run-head">
-              <span className="run-title">{run.title}</span>
-              <Chip className="skill">{run.skill}</Chip>
-              <AvatarStack agents={run.agents} size={18} />
-            </div>
-            {entries.map((entry) => (
+      <div className="pane-scroll todos-scroll">
+        {shown.length === 0 ? (
+          <div className="caught-up">
+            <svg className="enso" viewBox="0 0 48 48" aria-hidden="true">
+              <circle cx="24" cy="24" r="20" />
+            </svg>
+            <div className="caught-up-title">All caught up</div>
+            <div className="caught-up-note">Nothing needs you in this session</div>
+          </div>
+        ) : null}
+        {needs.length > 0 ? (
+          <section className="needs">
+            <div className="section-label">{SECTION_LABEL[tab]} · {needs.filter((row) => !row.leaving).length}</div>
+            {needs.map(({ entry, leaving }) => (
               <TodoRow
                 key={todoKey(entry)}
                 entry={entry}
                 selected={todoKey(entry) === props.selectedKey}
+                showRun={showRun}
+                leaving={leaving}
                 onSelect={() => props.onSelect(todoKey(entry))}
               />
             ))}
           </section>
-        ))}
+        ) : null}
+        {council.length > 0 ? (
+          <section className="council">
+            <button className="council-toggle" aria-expanded={props.councilOpen} onClick={props.onToggleCouncil}>
+              <CouncilIcon />
+              <span>Council picks · {council.filter((row) => !row.leaving).length}</span>
+              <svg className="chevron" width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+                <path d="M4 2.5 L7.5 6 L4 9.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </button>
+            {props.councilOpen
+              ? council.map(({ entry, leaving }) => (
+                  <CouncilRow
+                    key={todoKey(entry)}
+                    entry={entry}
+                    selected={todoKey(entry) === props.selectedKey}
+                    leaving={leaving}
+                    onSelect={() => props.onSelect(todoKey(entry))}
+                  />
+                ))
+              : null}
+          </section>
+        ) : null}
       </div>
       <footer className="todos-footer">
-        <div className="footer-actions">
-          {dead ? (
-            <>
-              <button className="btn btn-primary" onClick={props.onCopyPrompt}>
-                Copy prompt
-              </button>
-              <button className="btn" disabled={count === 0} onClick={props.onSubmit}>
-                {submitLabel}
-              </button>
-            </>
-          ) : (
-            <button className="btn btn-primary" disabled={count === 0} onClick={props.onSubmit}>
-              {submitLabel}
+        {dead ? (
+          <>
+            <button className="btn btn-primary" onClick={props.onCopyPrompt}>
+              Copy prompt
             </button>
-          )}
-        </div>
-        <button className="link" onClick={props.onCopyPrompt}>
-          Copy prompt
-        </button>
+            <span className="footer-note">Session ended · paste into Conductor</span>
+          </>
+        ) : (
+          <>
+            {props.confirming ? (
+              <SubmitConfirm name={thread.displayName} />
+            ) : (
+              <button className="btn btn-primary" disabled={count === 0} onClick={props.onSubmit}>
+                {count === 0 ? 'Nothing to submit' : `Submit ${count}`}
+              </button>
+            )}
+            <button className="link" onClick={props.onCopyPrompt}>
+              Copy prompt
+            </button>
+          </>
+        )}
       </footer>
     </aside>
   );
@@ -412,26 +649,6 @@ function BulletList({ title, items }: { title: string; items: string[] }) {
         ))}
       </ul>
     </div>
-  );
-}
-
-function RecommendationCard(props: { entry: Entry; agents: Agent[]; editable: boolean; onAccept: () => void }) {
-  const { recommendation } = props.entry.todo;
-  if (recommendation === null) return null;
-  const agent = agentOf(props.agents, recommendation.by);
-  const option = optionsFor(props.entry.todo).find((o) => o.id === recommendation.optionId);
-  return (
-    <section className="recommendation">
-      <Avatar agent={agent} size={40} />
-      <div className="recommendation-body">
-        <div className="recommendation-by">Recommended by {agent.name}</div>
-        <ClampText key={recommendation.summary} text={recommendation.summary} lines={4} />
-        {option !== undefined ? <span className="recommended-option">{option.label}</span> : null}
-      </div>
-      <button className="btn btn-gold" disabled={!props.editable} onClick={props.onAccept}>
-        Accept recommendation
-      </button>
-    </section>
   );
 }
 
@@ -471,10 +688,7 @@ function PositionCard({ todo, position, agents, onCopy }: { todo: Todo; position
     <div className="position">
       <div className="position-head">
         <Avatar agent={agent} size={32} />
-        <div className="position-who">
-          <div className="position-name">{agent.name}</div>
-          <div className="muted position-model">{agent.model}</div>
-        </div>
+        <div className="position-name">{agent.name}</div>
         <Chip className={matches ? 'stance stance-match' : 'stance'} title={position.stance}>
           {number === null ? position.stance : `Option ${number}`}
         </Chip>
@@ -526,22 +740,18 @@ function PositionsSection({ todo, agents, onCopy }: { todo: Todo; agents: Agent[
 
 function AnswerSummary({ todo }: { todo: Todo }) {
   const answer = todo.answer;
-  const rows: [string, string | null][] = [
-    ['Answer', answer === null ? null : capitalize(chosenLabel(todo))],
-    ['Note', answer !== null && answer.text.trim() !== '' ? answer.text : null],
-    ['Answered', answer === null ? null : formatTime(answer.answeredAt)],
-    ['Submitted', todo.submittedAt === null ? null : formatTime(todo.submittedAt)],
-    ['Picked up', todo.pickedUpAt === null ? null : formatTime(todo.pickedUpAt)],
-    ['Resolution', todo.resolution],
+  const rows: [string, string | null, boolean][] = [
+    ['Answer', answer === null ? null : capitalize(chosenLabel(todo)), false],
+    ['Note', answer !== null && answer.text.trim() !== '' ? answer.text : null, false],
   ];
   return (
     <dl className="summary">
       {rows
-        .filter((row): row is [string, string] => row[1] !== null)
-        .map(([name, value]) => (
+        .filter((row): row is [string, string, boolean] => row[1] !== null)
+        .map(([name, value, mono]) => (
           <div key={name} className="summary-row">
             <dt>{name}</dt>
-            <dd>{value}</dd>
+            <dd className={mono ? 'mono' : undefined}>{value}</dd>
           </div>
         ))}
     </dl>
@@ -549,6 +759,7 @@ function AnswerSummary({ todo }: { todo: Todo }) {
 }
 
 type DetailProps = {
+  busy: Busy | null;
   entry: Entry;
   agents: Agent[];
   draft: Draft;
@@ -560,6 +771,18 @@ type DetailProps = {
   onReopen: () => void;
   onCopy: (text: string) => void;
 };
+
+function AsyncLabel({ status, idle }: { status: Busy['status'] | undefined; idle: string }) {
+  if (status === 'saving') {
+    return (
+      <>
+        <i className="spinner" />
+        Saving
+      </>
+    );
+  }
+  return <>{status === 'saved' ? '✓ Saved' : idle}</>;
+}
 
 function AnswerBar(props: DetailProps) {
   const { todo } = props.entry;
@@ -586,8 +809,13 @@ function AnswerBar(props: DetailProps) {
         />
         <div className="answer-actions">
           {todo.recommendation !== null ? (
-            <button className="btn btn-gold" onClick={props.onAccept}>
-              Accept recommendation
+            <button
+              className="btn btn-gold btn-async"
+              data-status={props.busy?.kind === 'accept' ? props.busy.status : undefined}
+              disabled={props.busy !== null}
+              onClick={props.onAccept}
+            >
+              <AsyncLabel status={props.busy?.kind === 'accept' ? props.busy.status : undefined} idle="Accept recommendation" />
             </button>
           ) : null}
           <span className="answer-actions-end">
@@ -602,8 +830,16 @@ function AnswerBar(props: DetailProps) {
             <button className="btn" onClick={props.onDefer}>
               Defer
             </button>
-            <button className="btn btn-primary" disabled={!canSave(props.draft)} onClick={props.onSave}>
-              {todo.state === 'answered' ? 'Update answer' : 'Save answer'}
+            <button
+              className="btn btn-primary btn-async"
+              data-status={props.busy?.kind === 'save' ? props.busy.status : undefined}
+              disabled={!canSave(props.draft) || props.busy !== null}
+              onClick={props.onSave}
+            >
+              <AsyncLabel
+                status={props.busy?.kind === 'save' ? props.busy.status : undefined}
+                idle={todo.state === 'answered' ? 'Update answer' : 'Save answer'}
+              />
             </button>
           </span>
         </div>
@@ -623,23 +859,22 @@ function DetailPane(props: DetailProps) {
   const editable = isEditable(todo);
   const options = optionsFor(todo);
   return (
-    <main className="pane detail">
+    <>
       <div className="detail-scroll">
       <article className="detail-inner">
         <header className="detail-head">
-          <div className="chips">
-            <TodoChips todo={todo} />
-            <CouncilPick todo={todo} />
-            <span className="muted mono">{todo.id}</span>
+          <span className="detail-id mono">{todo.id}</span>
+          <div className="detail-title">
+            <h2>{todo.title}</h2>
+            {todo.answer?.preset === true ? <CouncilIcon title={COUNCIL_TOOLTIP} /> : null}
           </div>
-          <h2>{todo.title}</h2>
           <div className="detail-sub">
             <span>{run.title}</span>
             <Chip className="skill">{run.skill}</Chip>
           </div>
+          <Lifecycle state={todo.state} />
         </header>
         {todo.question !== '' ? <QuestionText text={todo.question} /> : null}
-        <RecommendationCard entry={entry} agents={agents} editable={editable} onAccept={props.onAccept} />
         {options.length > 0 ? (
           <section>
             <h3>Options</h3>
@@ -660,12 +895,26 @@ function DetailPane(props: DetailProps) {
           </section>
         ) : null}
         {todo.positions.length > 0 ? <PositionsSection key={`${run.runId}/${todo.id}`} todo={todo} agents={agents} onCopy={props.onCopy} /> : null}
+        {todo.diffs !== undefined && todo.diffs.length > 0 ? (
+          <section>
+            <h3>Change</h3>
+            <div className="diffs">
+              {todo.diffs.map((diff) => (
+                <Diff key={diff.path} path={diff.path} patch={diff.patch} />
+              ))}
+            </div>
+          </section>
+        ) : null}
         {todo.tradeoffs.length > 0 || todo.caveats.length > 0 ? (
           <section className="lists">
             <BulletList title="Tradeoffs" items={todo.tradeoffs} />
             <BulletList title="Caveats" items={todo.caveats} />
           </section>
         ) : null}
+        <section>
+          <h3>History</h3>
+          <History run={run} todo={todo} agents={agents} />
+        </section>
         {todo.evidence.length > 0 || todo.links.length > 0 ? (
           <section>
             <h3>Evidence</h3>
@@ -688,25 +937,45 @@ function DetailPane(props: DetailProps) {
       </article>
       </div>
       <AnswerBar {...props} />
-    </main>
+    </>
   );
 }
 
 export function App() {
-  const [showDone, setShowDone] = useState(false);
+  const [showArchived, setShowArchived] = useState(false);
+  const [view, setView] = useState<View>('overview');
+  const [teamOpen, setTeamOpen] = useState(false);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>('open');
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
   const [toast, setToast] = useState<string | null>(null);
+  const [confirmingId, setConfirmingId] = useState<string | null>(null);
+  const [busy, setBusy] = useState<Busy | null>(null);
+  const [snack, setSnack] = useState<SnackState | null>(null);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const snackTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const snackId = useRef(0);
+  const undoRef = useRef<Undo | null>(null);
+  const entryKeyRef = useRef<string | null>(null);
+  const confirmTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  const threads = useThreads(showDone) ?? [];
+  const threads = useThreads(showArchived) ?? [];
+  const now = useNow();
+  usePresence();
 
   const thread = threads.find((t) => t.sessionId === sessionId) ?? threads[0] ?? null;
+  const flashing = useNewTodos(threads, thread?.sessionId ?? null);
+  const [councilOpen, toggleCouncil] = useCouncilOpen(thread?.sessionId ?? '');
   const entries = thread === null ? [] : entriesOf(thread, tab);
-  const entry = entries.find((e) => todoKey(e) === selectedKey) ?? entries[0] ?? null;
+  const navigable = councilOpen ? entries : entries.filter(isNeedsYou);
+  const allEntries = thread === null ? [] : entriesOf(thread, 'all');
+  const entry = allEntries.find((e) => todoKey(e) === selectedKey) ?? navigable[0] ?? entries[0] ?? null;
   const entryKey = entry === null ? null : todoKey(entry);
+  const { ghosts, glowTab } = useLeaving(entries, allEntries, `${thread?.sessionId ?? ''}:${tab}`);
   const draft = entry === null || entryKey === null ? null : (drafts[entryKey] ?? initialDraft(entry.todo));
+  const decisionActive = view === 'decision' && entry !== null && draft !== null;
+  entryKeyRef.current = entryKey;
 
   function flash(message: string): void {
     setToast(message);
@@ -731,52 +1000,112 @@ export function App() {
   }
 
   function selectNextOpen(): void {
-    const index = entries.findIndex((e) => todoKey(e) === entryKey);
-    const others = [...entries.slice(index + 1), ...entries.slice(0, Math.max(index, 0))];
+    const index = navigable.findIndex((e) => todoKey(e) === entryKey);
+    const others = [...navigable.slice(index + 1), ...navigable.slice(0, Math.max(index, 0))];
     const next = others.find((e) => e.todo.state === 'open');
     if (next !== undefined) setSelectedKey(todoKey(next));
   }
 
-  async function answer(next: Draft, deferred: boolean): Promise<void> {
+  function announce(text: string, undo: Undo | null): void {
+    snackId.current += 1;
+    undoRef.current = undo;
+    setSnack({ id: snackId.current, text, undoable: undo !== null });
+    if (snackTimer.current !== undefined) clearTimeout(snackTimer.current);
+    snackTimer.current = setTimeout(() => setSnack(null), SNACK_MS);
+  }
+
+  async function undoSnack(): Promise<void> {
+    const undo = undoRef.current;
+    if (undo === null) return;
+    const message = await undo();
+    if (message === null) {
+      if (snackTimer.current !== undefined) clearTimeout(snackTimer.current);
+      setSnack(null);
+    } else {
+      announce(message, null);
+    }
+  }
+
+  async function reopenEntry(target: Entry): Promise<string | null> {
+    setDrafts((prev) => ({ ...prev, [todoKey(target)]: { optionId: null, text: '' } }));
+    await perform(`${todoPath(target)}/reopen`);
+    return null;
+  }
+
+  async function answer(next: Draft, deferred: boolean, kind: 'save' | 'accept' | 'defer'): Promise<void> {
     if (entry === null || entryKey === null) return;
-    setDrafts((prev) => ({ ...prev, [entryKey]: next }));
-    const ok = await perform(`${todoPath(entry)}/answer`, { optionId: next.optionId, text: next.text, deferred });
-    if (ok) selectNextOpen();
+    const target = entry;
+    const targetKey = entryKey;
+    setDrafts((prev) => ({ ...prev, [targetKey]: next }));
+    if (kind !== 'defer') setBusy({ kind, status: 'saving' });
+    const ok = await perform(`${todoPath(target)}/answer`, { optionId: next.optionId, text: next.text, deferred });
+    if (!ok) return setBusy(null);
+    if (kind === 'defer') {
+      announce(`${target.todo.id} deferred`, () => reopenEntry(target));
+      selectNextOpen();
+      return;
+    }
+    setBusy({ kind, status: 'saved' });
+    await new Promise((resolve) => setTimeout(resolve, prefersReducedMotion() ? 0 : SAVED_MS));
+    setBusy(null);
+    if (entryKeyRef.current === targetKey) selectNextOpen();
   }
 
   async function accept(): Promise<void> {
-    if (entry === null) return;
+    if (entry === null || busy !== null) return;
     const { recommendation } = entry.todo;
     if (recommendation === null) return;
-    await answer({ optionId: recommendation.optionId ?? null, text: '' }, false);
+    await answer({ optionId: recommendation.optionId ?? null, text: '' }, false, 'accept');
   }
 
   async function save(): Promise<void> {
-    if (draft !== null && canSave(draft)) await answer(draft, false);
+    if (draft !== null && busy === null && canSave(draft)) await answer(draft, false, 'save');
   }
 
   async function defer(): Promise<void> {
-    if (draft !== null) await answer({ optionId: null, text: draft.text }, true);
+    if (draft !== null && busy === null) await answer({ optionId: null, text: draft.text }, true, 'defer');
   }
 
   async function dismiss(): Promise<void> {
     if (entry === null) return;
-    const ok = await perform(`${todoPath(entry)}/dismiss`);
-    if (ok) selectNextOpen();
+    const target = entry;
+    const ok = await perform(`${todoPath(target)}/dismiss`);
+    if (!ok) return;
+    announce(`${target.todo.id} dismissed`, () => reopenEntry(target));
+    selectNextOpen();
   }
 
   async function reopen(): Promise<void> {
-    if (entry === null || entryKey === null) return;
-    setDrafts((prev) => ({ ...prev, [entryKey]: { optionId: null, text: '' } }));
-    await perform(`${todoPath(entry)}/reopen`);
+    if (entry !== null) await reopenEntry(entry);
+  }
+
+  async function unsubmit(sessionId: string, submissionIds: string[]): Promise<string | null> {
+    let reverted = 0;
+    let pickedUp = 0;
+    for (const submissionId of submissionIds) {
+      const response = await postJson(`/api/threads/${encodeURIComponent(sessionId)}/unsubmit`, { submissionId });
+      if (!response.ok) continue;
+      const result = (await response.json()) as { reverted: number; pickedUp: number };
+      reverted += result.reverted;
+      pickedUp += result.pickedUp;
+    }
+    if (reverted === 0 && pickedUp > 0) return 'Already picked up by the agent';
+    setConfirmingId(null);
+    return null;
   }
 
   async function submit(): Promise<void> {
     if (thread === null || thread.answeredCount === 0) return;
-    const response = await postJson(`/api/threads/${encodeURIComponent(thread.sessionId)}/submit`);
+    const target = thread;
+    const response = await postJson(`/api/threads/${encodeURIComponent(target.sessionId)}/submit`);
     if (!response.ok) return flash('Submit failed');
-    const { submitted } = (await response.json()) as { submitted: number };
-    flash(`Submitted ${submitted} to ${thread.session.workspaceName}`);
+    const { submitted, submissionIds } = (await response.json()) as { submitted: number; submissionIds: string[] };
+    setConfirmingId(target.sessionId);
+    if (confirmTimer.current !== undefined) clearTimeout(confirmTimer.current);
+    confirmTimer.current = setTimeout(() => setConfirmingId(null), CONFIRM_MS);
+    announce(`${submitted} ${submitted === 1 ? 'answer' : 'answers'} sent to ${target.displayName}`, () =>
+      unsubmit(target.sessionId, submissionIds),
+    );
   }
 
   async function copyPrompt(): Promise<void> {
@@ -786,19 +1115,34 @@ export function App() {
     await copyText(text, 'Prompt copied');
   }
 
-  async function focusConductor(): Promise<void> {
-    await perform('/api/focus-conductor');
-  }
-
   function selectThread(id: string): void {
     setSessionId(id);
     setSelectedKey(null);
+    setView('overview');
+  }
+
+  function selectTodo(key: string): void {
+    setSelectedKey(key);
+    setView('decision');
+  }
+
+  function openTodo(key: string): void {
+    const target = allEntries.find((e) => todoKey(e) === key);
+    if (target !== undefined && !matchesTab(target.todo, tab)) {
+      setTab(TABS.find((t) => t.states?.includes(target.todo.state))?.id ?? 'all');
+    }
+    selectTodo(key);
+  }
+
+  async function toggleArchive(target: Thread): Promise<void> {
+    const action = target.archived ? 'unarchive' : 'archive';
+    await perform(`/api/threads/${encodeURIComponent(target.sessionId)}/${action}`);
   }
 
   function moveTodo(delta: number): void {
-    const index = entry === null ? -1 : entries.findIndex((e) => todoKey(e) === entryKey);
-    const next = entries[Math.min(entries.length - 1, Math.max(0, index + delta))];
-    if (next !== undefined) setSelectedKey(todoKey(next));
+    const index = decisionActive ? navigable.findIndex((e) => todoKey(e) === entryKey) : -1;
+    const next = navigable[Math.min(navigable.length - 1, Math.max(0, index + delta))];
+    if (next !== undefined) selectTodo(todoKey(next));
   }
 
   function moveThread(delta: number): void {
@@ -808,22 +1152,85 @@ export function App() {
   }
 
   function pickOption(index: number): void {
-    if (entry === null || !isEditable(entry.todo)) return;
+    if (!decisionActive || entry === null || !isEditable(entry.todo)) return;
     const option = optionsFor(entry.todo)[index];
     if (option !== undefined) patchDraft({ optionId: option.id });
+  }
+
+  function paletteItems(): PaletteItem[] {
+    const editable = decisionActive && entry !== null && isEditable(entry.todo);
+    const actions: PaletteItem[] = [];
+    if (editable && entry !== null && entry.todo.recommendation !== null) {
+      actions.push({ id: 'accept', title: 'Accept recommendation', subtitle: entry.todo.title, shortcut: 'a', run: () => void accept() });
+    }
+    if (editable) {
+      actions.push({ id: 'defer', title: 'Defer', subtitle: entry?.todo.title ?? '', shortcut: 'd', run: () => void defer() });
+      actions.push({ id: 'dismiss', title: 'Dismiss', subtitle: entry?.todo.title ?? '', run: () => void dismiss() });
+    }
+    if (thread !== null && thread.answeredCount > 0) {
+      actions.push({
+        id: 'submit',
+        title: `Submit ${thread.answeredCount} to ${thread.displayName}`,
+        subtitle: '',
+        shortcut: '⌘↵',
+        run: () => void submit(),
+      });
+    }
+    actions.push({ id: 'overview', title: 'Overview', subtitle: thread?.displayName ?? '', shortcut: 'o', run: () => setView('overview') });
+    if (thread !== null) {
+      actions.push({
+        id: 'archive',
+        title: thread.archived ? 'Unarchive thread' : 'Archive thread',
+        subtitle: thread.displayName,
+        shortcut: 'e',
+        run: () => void toggleArchive(thread),
+      });
+      actions.push({ id: 'prompt', title: 'Copy prompt', subtitle: thread.displayName, run: () => void copyPrompt() });
+    }
+    actions.push({
+      id: 'archived',
+      title: showArchived ? 'Hide archived' : 'Show archived',
+      subtitle: '',
+      run: () => setShowArchived(!showArchived),
+    });
+    const goThreads: PaletteItem[] = threads.map((t) => ({
+      id: `thread:${t.sessionId}`,
+      title: `Go to ${t.displayName}`,
+      subtitle: t.description,
+      run: () => selectThread(t.sessionId),
+    }));
+    const goTodos: PaletteItem[] = allEntries.map((e) => ({
+      id: `todo:${todoKey(e)}`,
+      title: e.todo.title,
+      subtitle: `${e.todo.id} · ${thread?.displayName ?? ''}`,
+      run: () => openTodo(todoKey(e)),
+    }));
+    return [...actions, ...goThreads, ...goTodos];
   }
 
   const keyHandler = useRef<(event: KeyboardEvent) => void>(() => undefined);
   keyHandler.current = (event) => {
     const modified = event.metaKey || event.ctrlKey;
+    if (modified && event.key.toLowerCase() === 'k') {
+      event.preventDefault();
+      setPaletteOpen(!paletteOpen);
+      return;
+    }
+    if (paletteOpen) return;
     if (event.key === 'Enter' && modified) {
       event.preventDefault();
       void submit();
       return;
     }
+    if (event.key === 'Escape' && teamOpen) {
+      setTeamOpen(false);
+      return;
+    }
     if (modified || event.altKey || isTyping(event.target)) return;
-    const editable = entry !== null && isEditable(entry.todo);
-    if (event.key === 'j') moveTodo(1);
+    const editable = decisionActive && entry !== null && isEditable(entry.todo);
+    if (event.key === 'o') setView('overview');
+    else if (event.key === 'e' && thread !== null) void toggleArchive(thread);
+    else if (event.key === 'j') moveTodo(1);
     else if (event.key === 'k') moveTodo(-1);
     else if (event.key === '[') moveThread(-1);
     else if (event.key === ']') moveThread(1);
@@ -848,44 +1255,77 @@ export function App() {
       <ThreadsPane
         threads={threads}
         selectedId={thread?.sessionId ?? null}
-        showDone={showDone}
-        onToggleDone={setShowDone}
+        now={now}
+        flashing={flashing}
+        showArchived={showArchived}
+        teamOpen={teamOpen}
+        onToggleArchived={() => setShowArchived(!showArchived)}
+        onToggleTeam={() => setTeamOpen(!teamOpen)}
+        onCloseTeam={() => setTeamOpen(false)}
         onSelect={selectThread}
+        onArchive={(target) => void toggleArchive(target)}
       />
-      {entry !== null && draft !== null && thread !== null ? (
-        <DetailPane
-          entry={entry}
-          agents={thread.agents}
-          draft={draft}
-          onDraft={patchDraft}
-          onAccept={() => void accept()}
-          onSave={() => void save()}
-          onDefer={() => void defer()}
-          onDismiss={() => void dismiss()}
-          onReopen={() => void reopen()}
-          onCopy={(text) => void copyText(text, 'Copied')}
-        />
+      {thread === null ? (
+        <main className="pane detail">
+          <div className="empty empty-detail">No sessions need you.</div>
+        </main>
       ) : (
         <main className="pane detail">
-          <div className="empty empty-detail">{thread === null ? 'No sessions need you.' : 'Select a todo.'}</div>
+          <nav className="view-tabs" role="tablist">
+            <button role="tab" aria-selected={!decisionActive} className="view-tab" onClick={() => setView('overview')}>
+              Overview
+            </button>
+            <button
+              role="tab"
+              aria-selected={decisionActive}
+              className="view-tab"
+              disabled={entry === null}
+              onClick={() => setView('decision')}
+            >
+              Decision
+            </button>
+          </nav>
+          {decisionActive ? (
+            <DetailPane
+              entry={entry}
+              agents={thread.agents}
+              draft={draft}
+              onDraft={patchDraft}
+              onAccept={() => void accept()}
+              onSave={() => void save()}
+              onDefer={() => void defer()}
+              onDismiss={() => void dismiss()}
+              onReopen={() => void reopen()}
+              onCopy={(text) => void copyText(text, 'Copied')}
+              busy={busy}
+            />
+          ) : (
+            <Overview thread={thread} now={now} onTab={setTab} onOpenTodo={openTodo} />
+          )}
         </main>
       )}
       {thread !== null ? (
         <TodosPane
           thread={thread}
+          entries={entries}
+          ghosts={ghosts}
+          glowTab={glowTab}
           tab={tab}
           selectedKey={entryKey}
+          councilOpen={councilOpen}
+          onToggleCouncil={toggleCouncil}
           onTab={setTab}
-          onSelect={setSelectedKey}
+          onSelect={selectTodo}
+          confirming={confirmingId === thread.sessionId}
           onSubmit={() => void submit()}
           onCopyPrompt={() => void copyPrompt()}
-          onCopyPath={() => void copyText(thread.session.workspacePath, 'Path copied')}
-          onFocusConductor={() => void focusConductor()}
         />
       ) : (
         <aside className="pane todos" />
       )}
       {toast !== null ? <div className="toast">{toast}</div> : null}
+      {snack !== null ? <Snackbar snack={snack} onUndo={() => void undoSnack()} /> : null}
+      {paletteOpen ? <Palette items={paletteItems()} onClose={() => setPaletteOpen(false)} /> : null}
     </div>
   );
 }

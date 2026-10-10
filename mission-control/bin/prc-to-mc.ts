@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
+import { extractDiffs } from '../src/diffs';
 
 type SeatId = 'claude' | 'codex' | 'grok';
 
@@ -29,8 +30,9 @@ const KEY_SEVERITIES = new Set(['breaking', 'regression']);
 const SEATS: SeatId[] = ['claude', 'codex', 'grok'];
 
 const contextDir = process.argv[2];
+const summaryArg = process.argv[3];
 if (contextDir === undefined) {
-  console.error('usage: prc-to-mc.ts <prod-ready-check context dir>');
+  console.error('usage: prc-to-mc.ts <prod-ready-check context dir> [summary sentence]');
   process.exit(1);
 }
 
@@ -100,6 +102,7 @@ function contestedTodo(item: TallyItem) {
     caveats: item.confidence === 'low' ? ['Raised with low confidence'] : [],
     evidence: [{ ref: item.location }, ...(item.evidence !== undefined ? [{ ref: item.evidence }] : [])],
     links: [],
+    diffs: diffsFor(item),
   };
 }
 
@@ -117,7 +120,15 @@ function agreedTodo(item: TallyItem) {
     caveats: [],
     evidence: [{ ref: item.location }, ...(item.evidence !== undefined ? [{ ref: item.evidence }] : [])],
     links: [],
+    diffs: diffsFor(item),
   };
+}
+
+const patchPath = join(contextDir, 'diff.patch');
+const patch = existsSync(patchPath) ? readFileSync(patchPath, 'utf8') : '';
+
+function diffsFor(item: TallyItem) {
+  return extractDiffs(patch, item.location);
 }
 
 const tally = latestTally(contextDir);
@@ -137,9 +148,10 @@ console.log(
       runId: `prc-${repo}-${pr}`,
       skill: 'prod-ready-check',
       title: `PR #${pr} ${meta.title ?? ''}`.trim(),
+      summary: summaryArg ?? meta.title ?? '',
       agents: [
         { id: 'claude', name: 'Claude', role: 'orchestrator', harness: 'claude', model: 'claude-opus-5-5' },
-        { id: 'codex', name: 'Codex Sol', role: 'reviewer', harness: 'codex', model: process.env.CODEX_MODEL ?? 'gpt-6-sol' },
+        { id: 'codex', name: 'GPT-6 Sol', role: 'reviewer', harness: 'codex', model: process.env.CODEX_MODEL ?? 'gpt-6-sol' },
         { id: 'grok', name: 'Grok 4.6', role: 'reviewer', harness: 'cursor', model: process.env.GROK_MODEL ?? 'cursor-grok-4.6-medium' },
       ],
       todos,

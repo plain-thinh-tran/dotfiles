@@ -25,10 +25,21 @@ const CATEGORY_RANK: Record<TodoCategory, number> = { 'needs-you': 0, 'key-decis
 export type TodoInput = Pick<Todo, 'id' | 'title'> &
   Partial<Omit<Todo, 'id' | 'title' | 'state' | 'answer' | 'submittedAt' | 'pickedUpAt' | 'resolution'>>;
 
+export type ConductorNames = {
+  workspaceName: string;
+  userSetName: boolean;
+  prTitle: string;
+  branch: string;
+  title: string;
+};
+
+export type LiveInfo = { state: LiveState; names: ConductorNames | null };
+
 export type PushInput = {
   runId: string;
   skill: string;
   title: string;
+  summary?: string;
   session?: Partial<Session>;
   agents?: Agent[];
   todos?: TodoInput[];
@@ -41,6 +52,81 @@ export function mcHome(): string {
 
 export function runsDir(): string {
   return join(mcHome(), 'runs');
+}
+
+export type StepEntry = { text: string; at: string; agent: string | null };
+export type StepsFile = { current: StepEntry | null; history: StepEntry[] };
+
+const STEP_HISTORY = 30;
+
+export function stepsDir(): string {
+  return join(mcHome(), 'steps');
+}
+
+export function ensureStepsDir(): void {
+  mkdirSync(stepsDir(), { recursive: true });
+}
+
+export function stepPath(sessionId: string): string {
+  if (!SAFE_ID.test(sessionId)) throw new Error('sessionId may only contain letters, digits, ".", "_" and "-"');
+  return join(stepsDir(), `${sessionId}.json`);
+}
+
+function toStepEntry(raw: unknown): StepEntry | null {
+  if (!isRecord(raw) || typeof raw.text !== 'string' || typeof raw.at !== 'string') return null;
+  return { text: raw.text, at: raw.at, agent: typeof raw.agent === 'string' ? raw.agent : null };
+}
+
+function parseStepsFile(raw: unknown): StepsFile {
+  if (!isRecord(raw)) return { current: null, history: [] };
+  if ('current' in raw || 'history' in raw) {
+    const history = Array.isArray(raw.history) ? raw.history.map(toStepEntry).filter((e): e is StepEntry => e !== null) : [];
+    return { current: toStepEntry(raw.current), history };
+  }
+  return { current: toStepEntry(raw), history: [] };
+}
+
+function readStepsFile(path: string): StepsFile {
+  try {
+    return parseStepsFile(JSON.parse(readFileSync(path, 'utf8')));
+  } catch {
+    return { current: null, history: [] };
+  }
+}
+
+function saveStepsFile(path: string, file: StepsFile): void {
+  const tmp = `${path}.tmp-${process.pid}`;
+  writeFileSync(tmp, JSON.stringify(file));
+  renameSync(tmp, path);
+}
+
+export async function writeStep(sessionId: string, text: string, agent: string | null): Promise<string> {
+  ensureStepsDir();
+  const path = stepPath(sessionId);
+  return await withFileLock(`${path}.lock`, () => {
+    const entry: StepEntry = { text, at: new Date().toISOString(), agent };
+    const file = readStepsFile(path);
+    saveStepsFile(path, { current: entry, history: [...file.history, entry].slice(-STEP_HISTORY) });
+    return path;
+  });
+}
+
+export async function clearStep(sessionId: string): Promise<void> {
+  ensureStepsDir();
+  const path = stepPath(sessionId);
+  await withFileLock(`${path}.lock`, () => {
+    if (!existsSync(path)) return;
+    saveStepsFile(path, { current: null, history: readStepsFile(path).history });
+  });
+}
+
+export function readSteps(): Map<string, StepsFile> {
+  const steps = new Map<string, StepsFile>();
+  if (!existsSync(stepsDir())) return steps;
+  readdirSync(stepsDir())
+    .filter((name) => name.endsWith('.json'))
+    .forEach((name) => steps.set(name.slice(0, -'.json'.length), readStepsFile(join(stepsDir(), name))));
+  return steps;
 }
 
 export function ensureRunsDir(): void {
@@ -103,15 +189,48 @@ async function acquireLock(path: string): Promise<void> {
   }
 }
 
-export async function withRunLock<T>(runId: string, fn: () => T | Promise<T>): Promise<T> {
+export async function withFileLock<T>(path: string, fn: () => T | Promise<T>): Promise<T> {
   ensureRunsDir();
-  const path = `${runPath(runId)}.lock`;
   await acquireLock(path);
   try {
     return await fn();
   } finally {
     rmSync(path, { force: true });
   }
+}
+
+export async function withRunLock<T>(runId: string, fn: () => T | Promise<T>): Promise<T> {
+  return await withFileLock(`${runPath(runId)}.lock`, fn);
+}
+
+function archivedPath(): string {
+  return join(mcHome(), 'archived.json');
+}
+
+export function readArchived(): Set<string> {
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(archivedPath(), 'utf8'));
+    return new Set(Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === 'string') : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function writeArchived(ids: ReadonlySet<string>): void {
+  ensureRunsDir();
+  const path = archivedPath();
+  const tmp = `${path}.tmp-${process.pid}`;
+  writeFileSync(tmp, JSON.stringify([...ids], null, 2));
+  renameSync(tmp, path);
+}
+
+export async function setArchived(sessionId: string, archived: boolean): Promise<void> {
+  await withFileLock(`${archivedPath()}.lock`, () => {
+    const ids = readArchived();
+    if (archived) ids.add(sessionId);
+    else ids.delete(sessionId);
+    writeArchived(ids);
+  });
 }
 
 export async function updateRun(runId: string, mutate: (run: Run) => void): Promise<Run | null> {
@@ -126,11 +245,17 @@ export async function updateRun(runId: string, mutate: (run: Run) => void): Prom
 }
 
 export function pruneRuns(now: number = Date.now()): number {
-  const stale = listRuns().filter(
-    (run) => run.status === 'done' && now - new Date(run.updatedAt).getTime() > PRUNE_AFTER_MS,
+  const archived = readArchived();
+  const expired = [...groupRunsBySession(listRuns())].filter(
+    ([sessionId, runs]) =>
+      archived.has(sessionId) && runs.every((run) => now - new Date(run.updatedAt).getTime() > PRUNE_AFTER_MS),
   );
-  stale.forEach((run) => unlinkSync(runPath(run.runId)));
-  return stale.length;
+  expired.forEach(([, runs]) => runs.forEach((run) => unlinkSync(runPath(run.runId))));
+  if (expired.length > 0) {
+    expired.forEach(([sessionId]) => archived.delete(sessionId));
+    writeArchived(archived);
+  }
+  return expired.length;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -171,6 +296,7 @@ export function parsePushInput(raw: unknown): PushInput {
     runId,
     skill: requireString(raw, 'skill', 'input'),
     title: requireString(raw, 'title', 'input'),
+    summary: typeof raw.summary === 'string' && raw.summary.trim() !== '' ? raw.summary.trim() : undefined,
     session: isRecord(raw.session) ? (raw.session as Partial<Session>) : undefined,
     agents: Array.isArray(raw.agents) ? raw.agents.map(parseAgent) : undefined,
     todos: Array.isArray(raw.todos) ? raw.todos.map(parseTodoInput) : undefined,
@@ -197,12 +323,14 @@ function toTodo(input: TodoInput, existing: Todo | undefined, now: string): Todo
     tradeoffs: input.tradeoffs ?? [],
     caveats: input.caveats ?? [],
     evidence: input.evidence ?? [],
+    diffs: input.diffs ?? [],
     links: input.links ?? [],
     state: existing?.state ?? (preset === null ? 'open' : 'answered'),
     answer: existing?.answer ?? preset,
     submittedAt: existing?.submittedAt ?? null,
     pickedUpAt: existing?.pickedUpAt ?? null,
     resolution: existing?.resolution ?? null,
+    doneAt: existing?.doneAt,
   };
 }
 
@@ -218,7 +346,8 @@ export function mergeRun(existing: Run | null, input: PushInput, fallbackSession
     runId: input.runId,
     skill: input.skill,
     title: input.title,
-    status: 'active',
+    summary: input.summary ?? existing?.summary ?? '',
+    status: pushed.length > 0 ? 'active' : (existing?.status ?? 'active'),
     createdAt: existing?.createdAt ?? now,
     updatedAt: now,
     session: { ...(existing?.session ?? fallbackSession), ...input.session },
@@ -252,13 +381,40 @@ function sortTodos(run: Run): Run {
   return { ...run, todos };
 }
 
-function toThread(sessionId: string, groupRuns: Run[], live: LiveState): Thread {
+function displayNameOf(names: ConductorNames | null, fallback: string): string {
+  if (names === null) return fallback;
+  if (names.userSetName && names.workspaceName !== '') return names.workspaceName;
+  if (names.prTitle !== '') return names.prTitle;
+  if (names.branch !== '') return names.branch;
+  return fallback;
+}
+
+function descriptionOf(names: ConductorNames | null, runs: Run[]): string {
+  if (names !== null && names.title !== '') return names.title;
+  const newestFirst = [...runs].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  const active = newestFirst.find((run) => run.status !== 'done');
+  return (active ?? newestFirst[0])?.title ?? '';
+}
+
+function summaryOf(runs: Run[]): string {
+  const newestFirst = [...runs].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  return newestFirst.find((run) => run.summary !== undefined && run.summary !== '')?.summary ?? '';
+}
+
+function toThread(sessionId: string, groupRuns: Run[], info: LiveInfo | undefined, archived: boolean, steps: StepsFile | undefined): Thread {
   const runs = groupRuns.map(sortTodos);
   const latest = [...runs].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0] as Run;
+  const names = info?.names ?? null;
   return {
     sessionId,
+    archived,
     session: latest.session,
-    live,
+    displayName: displayNameOf(names, latest.session.workspaceName),
+    description: descriptionOf(names, runs),
+    summary: summaryOf(runs),
+    live: info?.state ?? 'dead',
+    step: steps?.current ?? null,
+    steps: steps?.history ?? [],
     agents: mergeAgents(runs),
     runs,
     openCount: countTodos(runs, 'open'),
@@ -276,11 +432,22 @@ export function groupRunsBySession(runs: Run[]): Map<string, Run[]> {
   return groups;
 }
 
-export function buildThreads(runs: Run[], live: ReadonlyMap<string, LiveState>, showDone: boolean): Thread[] {
+export function buildThreads(
+  runs: Run[],
+  live: ReadonlyMap<string, LiveInfo>,
+  archived: ReadonlySet<string>,
+  showArchived: boolean,
+  steps: ReadonlyMap<string, StepsFile>,
+): Thread[] {
   const threads = [...groupRunsBySession(runs)]
-    .filter(([, group]) => showDone || group.some((run) => run.status !== 'done'))
-    .map(([sessionId, group]) => toThread(sessionId, group, live.get(sessionId) ?? 'dead'));
+    .filter(([sessionId]) => showArchived || !archived.has(sessionId))
+    .map(([sessionId, group]) =>
+      toThread(sessionId, group, live.get(sessionId), archived.has(sessionId), steps.get(sessionId)),
+    );
   return threads.sort(
-    (a, b) => liveRank(a.live) - liveRank(b.live) || b.updatedAt.localeCompare(a.updatedAt),
+    (a, b) =>
+      Number(a.archived) - Number(b.archived) ||
+      liveRank(a.live) - liveRank(b.live) ||
+      b.updatedAt.localeCompare(a.updatedAt),
   );
 }

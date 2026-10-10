@@ -6,7 +6,8 @@
     "dev": "bun --hot src/server.ts",
     "start": "bun src/server.ts",
     "typecheck": "tsc --noEmit",
-    "check": "bun run typecheck"
+    "check": "bun run typecheck",
+    "test": "bun test"
   },
   "dependencies": {
     "react": "^19.3.0",

@@ -12,6 +12,8 @@ Scope is the code. Never report CI results, merge status, approvals, or PR proce
 
 ## Steps
 
+At the start of each step below, run `~/.claude/bin/mc step "<step, under 6 words>" --agent <claude|codex|grok>` (the seat doing that step) (for example "Gathering PR #11513", "Debate round 2", "Writing the report") so the user sees progress in Mission Control; run `~/.claude/bin/mc step --clear` after the report.
+
 1. **Gather.** From inside a clone of the PR's repo, run `~/.claude/skills/prod-ready-check/gather.sh <pr-number|pr-url>`. It writes `summary.md`, `diff.patch`, and raw JSON to `.context/prod-ready-check/pr-<N>/` (the context dir) and fetches the PR head to the local ref `pr-<N>`. Done when the summary prints.
    - Read code from `pr-<N>` and `origin/<base>` only. Workspace branches and local `main` are stale.
    - The rtk wrapper compacts `git show` / `git diff` output. Use `rtk proxy git ...` when you need whole files.
@@ -31,7 +33,7 @@ Scope is the code. Never report CI results, merge status, approvals, or PR proce
    - Done when the final tally exists. Write every item that ended `contested` to `<context-dir>/not-agreed.md` with all three sides' last stance, reason and evidence.
 9. **Pattern sweep.** For each agreed finding that comes from a code shape the series repeats, check the open siblings from step 3 for the same shape and list the affected PR numbers.
 10. **Report** in the format below. Findings sections come from `agreed` items in the final tally only; `contested` items go under Needs Your Call. Merge items that share a root cause. Posting comments to the PR is outward facing: ask first.
-11. **Mission Control.** When the final tally has contested items or agreed breaking or regression findings, run `bun ~/dotfiles/mission-control/bin/prc-to-mc.ts <context-dir> | ~/.claude/bin/mc push -` (run id `prc-<repo>-<pr>`), then start `~/.claude/bin/mc wait <runId>` with `run_in_background` and end the turn after the report. When the wait prints decisions:
+11. **Mission Control.** When the final tally has contested items or agreed breaking or regression findings, run `bun ~/dotfiles/mission-control/bin/prc-to-mc.ts <context-dir> "<summary>" | ~/.claude/bin/mc push -`, where `<summary>` is one sentence on what the PR changes and why, in plain words (for example "Add an SQS queue behind S3 notifications and in front of the groupers to provide a fallback mechanism"), never what the review did (run id `prc-<repo>-<pr>`), then start `~/.claude/bin/mc wait <runId>` with `run_in_background` and end the turn after the report. When the wait prints decisions:
     - Fold each into the report: "fix in this PR" moves the item to its severity section, "follow up separately" moves it to Worth Knowing marked follow up, "drop" removes it. Restate the verdict only if it changed.
     - Run `~/.claude/bin/mc resolve <runId> <id> "<what changed in the report>"` for each decision.
     - Wait again while anything is still open; when nothing is, run `~/.claude/bin/mc done <runId>`. On `TIMEOUT`, start the wait once more.

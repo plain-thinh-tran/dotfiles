@@ -53,9 +53,11 @@ Model choices for every seat come from the benchmark in `~/.claude/skills/model-
 
 ## Mission Control
 
+At the start of each step, run `~/.claude/bin/mc step "<step, under 6 words>" --agent <seat id from mc.json>` (your own id for chair work, `codex` or `grok` while their council call runs, `sonnet` while a worker packet runs) (for example "Design meeting, round 1", "Building packet 2 of 4", "Review meeting") so the user sees what the session is doing; run `~/.claude/bin/mc step --clear` after the report.
+
 Decisions the user owns go through Mission Control, not the chat. Write `<dir>/mc.json`:
 
-- `runId`: `avengers-<slug>`; `skill`: `avengers`; `title`: one line.
+- `runId`: `avengers-<slug>`; `skill`: `avengers`; `title`: one line; `summary`: one sentence on what the change does and why, in plain words ("Add an SQS queue behind S3 notifications and in front of the groupers to provide a fallback mechanism"), never what the council did, so the user knows the thread at a glance when they come back to it.
 - `agents`: the seats that took part, with `role` `orchestrator` for you, `council` for Codex Sol and Cursor Grok.
 - `todos`: one per decision, with `id` (`D1`, `D2`, …), `kind` `decision`, `category`, `title`, `question`, `options` (one per side actually argued, `id` and `label`), `positions` (one per seat: `agent`, `stance`, `optionId`, `summary`, `reason`, `evidence` as `path:line`), `recommendation` (`by` your id, `optionId`, `summary` with the ruling's reason), `tradeoffs`, `caveats`.
 
