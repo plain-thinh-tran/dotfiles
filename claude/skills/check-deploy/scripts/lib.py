@@ -94,17 +94,27 @@ def dd_keys():
     return api, app
 
 
-def dd_post(path, body):
+class RateLimited(RuntimeError):
+    pass
+
+
+def dd_post(path, body, attempts=4):
     api, app = dd_keys()
-    req = urllib.request.Request(
-        f"{DD_SITE}{path}",
-        data=json.dumps(body).encode(),
-        headers={"DD-API-KEY": api, "DD-APPLICATION-KEY": app, "Content-Type": "application/json"},
-    )
-    try:
-        return json.load(urllib.request.urlopen(req, timeout=60))
-    except urllib.error.HTTPError as e:
-        raise RuntimeError(f"Datadog {path} {e.code}: {e.read()[:300]!r}") from e
+    for attempt in range(1, attempts + 1):
+        req = urllib.request.Request(
+            f"{DD_SITE}{path}",
+            data=json.dumps(body).encode(),
+            headers={"DD-API-KEY": api, "DD-APPLICATION-KEY": app, "Content-Type": "application/json"},
+        )
+        try:
+            return json.load(urllib.request.urlopen(req, timeout=60))
+        except urllib.error.HTTPError as e:
+            if e.code != 429:
+                raise RuntimeError(f"Datadog {path} {e.code}: {e.read()[:300]!r}") from e
+            if attempt == attempts:
+                raise RateLimited(f"Datadog {path} 429 after {attempts} attempts") from e
+            reset = e.headers.get("X-RateLimit-Reset", "")
+            time.sleep(min(int(reset) + 1 if reset.isdigit() else 10 * attempt, 30))
 
 
 def error_issues(env, since_ms, until_ms=None, extra_query=""):

@@ -30,7 +30,7 @@ One read-only probe per changed behaviour in `<ctx>/checks/NN-name.sh`. A check 
 
 - First line `# phase: prod` (runs once prod-uk aliases are promoted) or `# phase: always`.
 - Exit 0 for pass, 75 for warm (too early to judge, e.g. traffic still building up), anything else for fail. A warm check is not a failure, but the tick does not count as clean. The last stdout line is the evidence shown in reports.
-- The runner provides `AWS_PROFILE=prod-uk-claude-read-only`, `AWS_REGION`, `PROD_START_MS`, `PROD_DONE_MS`, `CTX`, and `$DD` (`$DD logs-count '<query>' <since-ms>`, `$DD errors <env> <since-ms>`).
+- The runner provides `AWS_PROFILE=prod-uk-claude-read-only`, `AWS_REGION`, `PROD_START_MS`, `PROD_DONE_MS`, `CTX`, and `$DD` (`$DD logs-count '<query>' <since-ms>`, `$DD errors <env> <since-ms>`). `$DD` retries Datadog 429s and exits 75 if it stays rate limited, so pass its exit code through: `n=$($DD logs-count '<query>' "$PROD_START_MS") || { rc=$?; echo "$n"; exit $rc; }`. A rate limited query then reads as WARM, not FAIL.
 - Cover three angles: the resources or config the PR adds exist and are wired; the changed path carries traffic; its failure sinks (DLQs, error metrics, error logs) stay empty. Traffic checks exit 75 during their warm-up window instead of failing straight after deploy.
 
 Run each check once by hand (`bash <check>` with those variables set) before watching. A check that fails on a typo or a permission is a broken check: fix it now. `examples/pr-11513/` is a worked set (ingest queues wired, DLQs empty, traffic flowing, no Lambda errors).
