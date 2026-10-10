@@ -63,7 +63,7 @@ export type Todo = {
   resolution: string | null;
   doneAt?: string;
   diffs?: { path: string; patch: string }[];
-  conversation?: { from: 'thinh' | 'agent'; text: string; at: string }[];
+  conversation?: { from: 'thinh' | 'agent'; text: string; at: string; pending?: boolean }[];
 };
 
 export type Session = {

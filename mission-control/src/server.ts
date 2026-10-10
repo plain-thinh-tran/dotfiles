@@ -1,9 +1,11 @@
 import { watch } from 'node:fs';
 import index from '../web/index.html';
 import { avatarPath, downloadMissingAvatars, isAvatarId } from './avatarFiles';
-import { computeLiveInfo } from './live';
-import { isAwaitingPickup, isLocked, isReadyToSubmit, threadPrompt } from './prompt';
+import { activeWaits, computeLiveInfo } from './live';
+import { isAwaitingPickup, isLocked, isReadyToSubmit, pendingQuestion, threadPrompt } from './prompt';
 import {
+  addQuestion,
+  addReply,
   buildThreads,
   ensureRunsDir,
   type LiveInfo,
@@ -193,6 +195,100 @@ async function serveAvatar(req: Request & { params: { file: string } }): Promise
   });
 }
 
+async function textBody(req: Request): Promise<string | null> {
+  const body = await readJson(req);
+  const text = typeof body === 'object' && body !== null ? (body as Record<string, unknown>).text : undefined;
+  return typeof text === 'string' && text.trim() !== '' ? text.trim() : null;
+}
+
+async function askTodo(req: TodoRequest): Promise<Response> {
+  const text = await textBody(req);
+  if (text === null) return Response.json({ error: 'Invalid ask body' }, { status: 400 });
+  const { runId, todoId } = req.params;
+  if (!(await addQuestion(runId, todoId, text))) return notFound(`Todo ${runId}/${todoId} not found`);
+  return Response.json({ ok: true });
+}
+
+async function replyTodo(req: TodoRequest): Promise<Response> {
+  const text = await textBody(req);
+  if (text === null) return Response.json({ error: 'Invalid reply body' }, { status: 400 });
+  const { runId, todoId } = req.params;
+  if (!(await addReply(runId, todoId, text))) return notFound(`Todo ${runId}/${todoId} not found`);
+  return Response.json({ ok: true });
+}
+
+function questionsOf(run: Run) {
+  return run.todos.flatMap((todo) => {
+    const text = pendingQuestion(todo);
+    if (text === null) return [];
+    return [
+      {
+        runId: run.runId,
+        todoId: todo.id,
+        title: todo.title,
+        question: todo.question,
+        text,
+        recommendation: todo.recommendation,
+        options: todo.options.map((option) => ({ id: option.id, label: option.label })),
+        positions: todo.positions.map((position) => ({
+          agent: position.agent,
+          optionId: position.optionId,
+          summary: position.summary,
+        })),
+        tradeoffs: todo.tradeoffs,
+        caveats: todo.caveats,
+        conversation: todo.conversation ?? [],
+      },
+    ];
+  });
+}
+
+const workWaiters = new Set<() => void>();
+
+function notifyWork(): void {
+  workWaiters.forEach((wake) => wake());
+  workWaiters.clear();
+}
+
+function nextChange(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      workWaiters.delete(wake);
+      resolve();
+    }, ms);
+    function wake(): void {
+      clearTimeout(timer);
+      resolve();
+    }
+    workWaiters.add(wake);
+  });
+}
+
+async function collectWork(sessionId: string) {
+  const runs = groupRunsBySession(listRuns()).get(sessionId) ?? [];
+  const waits = await activeWaits();
+  const submitted = runs
+    .map((run) => ({
+      runId: run.runId,
+      todoIds: run.todos.filter(isAwaitingPickup).map((todo) => todo.id),
+      waitActive: waits.has(run.runId),
+    }))
+    .filter((entry) => entry.todoIds.length > 0);
+  return { questions: runs.flatMap(questionsOf), submitted };
+}
+
+async function sessionWork(req: Request & { params: { sessionId: string } }, timeout: (req: Request, seconds: number) => void): Promise<Response> {
+  const waitSeconds = Math.min(Number(new URL(req.url).searchParams.get('wait') ?? '0') || 0, 50);
+  const deadline = Date.now() + waitSeconds * 1000;
+  if (waitSeconds > 0) timeout(req, waitSeconds + 10);
+  let work = await collectWork(req.params.sessionId);
+  while (work.questions.length === 0 && work.submitted.every((s) => s.waitActive) && Date.now() < deadline) {
+    await nextChange(deadline - Date.now());
+    work = await collectWork(req.params.sessionId);
+  }
+  return Response.json(work);
+}
+
 async function setPresence(req: Request): Promise<Response> {
   const body = await readJson(req);
   const focused = typeof body === 'object' && body !== null ? (body as Record<string, unknown>).focused : undefined;
@@ -234,6 +330,7 @@ function send(client: Client, chunk: string): void {
 }
 
 function broadcast(): void {
+  notifyWork();
   if (clients.size === 0) return;
   const payloads = new Map<boolean, string>();
   clients.forEach((client) => {
@@ -311,6 +408,9 @@ const server = Bun.serve({
     '/api/runs/:runId/todos/:todoId/dismiss': { POST: (req: TodoRequest) => dismissTodo(req) },
     '/api/runs/:runId/todos/:todoId/reopen': { POST: (req: TodoRequest) => reopenTodo(req) },
     '/avatars/:file': { GET: (req: Request & { params: { file: string } }) => serveAvatar(req) },
+    '/api/runs/:runId/todos/:todoId/ask': { POST: (req: TodoRequest) => askTodo(req) },
+    '/api/runs/:runId/todos/:todoId/reply': { POST: (req: TodoRequest) => replyTodo(req) },
+    '/api/sessions/:sessionId/work': { GET: (req: Request & { params: { sessionId: string } }, srv) => sessionWork(req, (r, sec) => srv.timeout(r, sec)) },
     '/api/presence': { GET: () => getPresence(), POST: (req) => setPresence(req) },
     '/api/focus-conductor': { POST: () => focusConductor() },
     '/api/threads/:sessionId/archive': { POST: (req: ThreadRequest) => archiveThread(req, true) },

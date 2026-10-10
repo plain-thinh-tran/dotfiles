@@ -5,6 +5,7 @@ import { basename, dirname, join } from 'node:path';
 import { downloadMissingAvatars } from '../src/avatarFiles';
 import { isAwaitingPickup, threadPrompt, waitBlock } from '../src/prompt';
 import {
+  addReply,
   clearStep,
   ensureRunsDir,
   listRuns,
@@ -219,13 +220,7 @@ async function reply(args: string[]): Promise<void> {
   if (runId === undefined || todoId === undefined || text === '') {
     fail('Usage: mc reply <runId> <todoId> "<text>" [--question "<new question text>"]');
   }
-  const run = await updateRun(runId, (target) => {
-    const todo = target.todos.find((t) => t.id === todoId);
-    if (todo === undefined) return;
-    todo.conversation = [...(todo.conversation ?? []), { from: 'agent', text, at: new Date().toISOString() }];
-    if (newQuestion !== undefined) todo.question = newQuestion;
-  });
-  if (run === null || !run.todos.some((t) => t.id === todoId)) fail(`Todo not found: ${runId}/${todoId}`);
+  if (!(await addReply(runId, todoId, text, newQuestion))) fail(`Todo not found: ${runId}/${todoId}`);
   console.log(`Replied on ${runId}/${todoId}`);
 }
 

@@ -30,6 +30,11 @@ export function chosenLabel(todo: Todo): string {
   return optionsFor(todo).find((option) => option.id === answer.optionId)?.label ?? answer.optionId;
 }
 
+export function pendingQuestion(todo: Todo): string | null {
+  const latest = [...(todo.conversation ?? [])].reverse().find((message) => message.from === 'thinh');
+  return latest?.pending === true ? latest.text : null;
+}
+
 function oneLine(text: string): string {
   return text.trim().replace(/\s*\n\s*/g, ' ');
 }
@@ -45,6 +50,14 @@ export function decisionLine(todo: Todo, runId: string): string {
   return `${head} ${chosenLabel(todo)}${pick}. Note: ${note}`;
 }
 
+function pendingLines(run: Run): string[] {
+  return run.todos.flatMap((todo) => {
+    const text = pendingQuestion(todo);
+    if (text === null) return [];
+    return [`- ${todo.id} ${todo.title}: QUESTION from Thinh (unanswered): ${oneLine(text)}. Reply with mc reply ${run.runId} ${todo.id} "<answer>".`];
+  });
+}
+
 function stillOpenLine(run: Run, excluded: ReadonlySet<string>): string {
   const ids = run.todos
     .filter((t) => (t.state === 'open' || t.state === 'answered') && !excluded.has(t.id))
@@ -56,6 +69,7 @@ export function waitBlock(run: Run, picked: Todo[]): string {
   return [
     `MISSION CONTROL DECISIONS ${run.runId}`,
     ...picked.map((todo) => decisionLine(todo, run.runId)),
+    ...pendingLines(run),
     stillOpenLine(run, new Set(picked.map((todo) => todo.id))),
     `Next: act on the decisions, run \`mc resolve ${run.runId} <todoId> "<what you did>"\` for each, then \`mc wait ${run.runId}\` again if anything is still open.`,
   ].join('\n');
@@ -63,10 +77,12 @@ export function waitBlock(run: Run, picked: Todo[]): string {
 
 function runSection(run: Run): string | null {
   const decided = run.todos.filter((t) => isReadyToSubmit(t) || isAwaitingPickup(t));
-  if (decided.length === 0) return null;
+  const pending = pendingLines(run);
+  if (decided.length === 0 && pending.length === 0) return null;
   return [
     `Mission Control decisions for ${run.title} (run ${run.runId})`,
     ...decided.map((todo) => decisionLine(todo, run.runId)),
+    ...pending,
     stillOpenLine(run, new Set()),
   ].join('\n');
 }

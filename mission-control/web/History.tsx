@@ -1,3 +1,4 @@
+import { voteCounts } from '../src/council';
 import { chosenLabel } from '../src/prompt';
 import type { Agent, Run, Todo } from '../src/types';
 
@@ -16,12 +17,11 @@ function raisedBy(todo: Todo, agents: Agent[]): string {
 }
 
 function councilResult(todo: Todo): string | null {
-  const picks = todo.positions.map((position) => position.optionId).filter((id): id is string => id !== undefined);
-  if (picks.length < 2) return null;
-  const counts = new Map<string, number>();
-  picks.forEach((id) => counts.set(id, (counts.get(id) ?? 0) + 1));
-  const [first = 0, second = 0] = [...counts.values()].sort((a, b) => b - a);
-  return counts.size === 1 ? 'Council agreed' : `Council split ${first} to ${second}`;
+  const votes = voteCounts(todo.positions);
+  if (votes.reduce((sum, n) => sum + n, 0) < 2) return null;
+  if (votes.length === 1) return 'Council agreed';
+  if (votes.length >= 3 && votes.every((n) => n === 1)) return `Council split ${votes.length} ways`;
+  return `Council split ${votes.join(' to ')}`;
 }
 
 function answerEvent(todo: Todo): HistoryEvent | null {
@@ -29,7 +29,6 @@ function answerEvent(todo: Todo): HistoryEvent | null {
   if (answer === null) return null;
   if (answer.preset === true) return { key: 'answer', label: 'Council pick kept', at: answer.answeredAt };
   if (answer.deferred) return { key: 'answer', label: 'Deferred', at: answer.answeredAt };
-  if (answer.question === true) return { key: 'asked-pending', label: `You asked: ${answer.text.trim()}`, at: answer.answeredAt };
   const label = chosenLabel(todo);
   return { key: 'answer', label: label === 'answered' ? 'You answered' : `You answered: ${label}`, at: answer.answeredAt };
 }

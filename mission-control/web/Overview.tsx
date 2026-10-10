@@ -49,7 +49,6 @@ function sliceOf(todo: Todo): Slice | null {
   if (todo.state === 'dismissed') return 'dismissed';
   const answer = todo.answer;
   if (answer === null) return todo.state === 'open' ? 'open' : null;
-  if (answer.question === true) return 'open';
   if (answer.deferred) return 'deferred';
   return answer.preset === true ? 'council' : 'you';
 }

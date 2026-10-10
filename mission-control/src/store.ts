@@ -13,8 +13,9 @@ import {
 } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { councilAgrees } from './council';
 import { isReadyToSubmit } from './prompt';
-import type { Agent, LiveState, Run, Session, Thread, Todo, TodoCategory } from './types';
+import type { Agent, LiveState, Position, Run, Session, Thread, Todo, TodoCategory } from './types';
 
 const SAFE_ID = /^[A-Za-z0-9._-]+$/;
 const PRUNE_AFTER_MS = 14 * 24 * 60 * 60 * 1000;
@@ -143,7 +144,7 @@ export function readRun(runId: string): Run | null {
   const path = runPath(runId);
   if (!existsSync(path)) return null;
   try {
-    return JSON.parse(readFileSync(path, 'utf8')) as Run;
+    return normalizeRun(JSON.parse(readFileSync(path, 'utf8')) as Run);
   } catch {
     return null;
   }
@@ -234,6 +235,33 @@ export async function setArchived(sessionId: string, archived: boolean): Promise
   });
 }
 
+async function changeTodo(runId: string, todoId: string, change: (todo: Todo, at: string) => void): Promise<boolean> {
+  let found = false;
+  await updateRun(runId, (run) => {
+    const todo = run.todos.find((t) => t.id === todoId);
+    if (todo === undefined) return;
+    found = true;
+    change(todo, new Date().toISOString());
+  });
+  return found;
+}
+
+export async function addQuestion(runId: string, todoId: string, text: string): Promise<boolean> {
+  return await changeTodo(runId, todoId, (todo, at) => {
+    todo.conversation = [...(todo.conversation ?? []), { from: 'thinh', text, at, pending: true }];
+  });
+}
+
+export async function addReply(runId: string, todoId: string, text: string, newQuestion?: string): Promise<boolean> {
+  return await changeTodo(runId, todoId, (todo, at) => {
+    const settled = (todo.conversation ?? []).map((message) =>
+      message.from === 'thinh' ? { from: message.from, text: message.text, at: message.at } : message,
+    );
+    todo.conversation = [...settled, { from: 'agent', text, at }];
+    if (newQuestion !== undefined) todo.question = newQuestion;
+  });
+}
+
 export async function updateRun(runId: string, mutate: (run: Run) => void): Promise<Run | null> {
   return await withRunLock(runId, () => {
     const run = readRun(runId);
@@ -304,30 +332,49 @@ export function parsePushInput(raw: unknown): PushInput {
   };
 }
 
-function presetAnswer(input: TodoInput, now: string): Todo['answer'] {
+function categoryOf(input: TodoInput): TodoCategory {
+  const requested = input.category ?? 'key-decision';
+  if (requested !== 'key-decision') return requested;
+  return councilAgrees(input.positions ?? [], input.recommendation ?? null) ? 'key-decision' : 'needs-you';
+}
+
+function normalizePosition(position: Position): Position {
+  const raw: unknown = position.evidence;
+  if (raw === undefined || Array.isArray(raw)) return position;
+  return { ...position, evidence: typeof raw === 'string' && raw.trim() !== '' ? raw.split(/;\s+/) : [] };
+}
+
+export function normalizeRun(run: Run): Run {
+  return { ...run, todos: run.todos.map((todo) => ({ ...todo, positions: todo.positions.map(normalizePosition) })) };
+}
+
+function presetAnswer(input: TodoInput, category: TodoCategory, now: string): Todo['answer'] {
   const optionId = input.recommendation?.optionId;
-  if (input.category !== 'key-decision' || optionId === undefined) return null;
+  if (category !== 'key-decision' || optionId === undefined) return null;
   return { optionId, text: '', deferred: false, answeredAt: now, preset: true };
 }
 
 function toTodo(input: TodoInput, existing: Todo | undefined, now: string): Todo {
-  const preset = existing === undefined ? presetAnswer(input, now) : null;
+  const category = categoryOf(input);
+  const preset = existing === undefined ? presetAnswer(input, category, now) : null;
+  const staleCouncilPick =
+    existing !== undefined && existing.state === 'answered' && existing.answer?.preset === true && category !== 'key-decision';
   return {
     id: input.id,
     kind: input.kind ?? 'decision',
-    category: input.category ?? 'key-decision',
+    category,
     title: input.title,
     question: input.question ?? '',
     recommendation: input.recommendation ?? null,
     options: input.options ?? [],
-    positions: input.positions ?? [],
+    positions: (input.positions ?? []).map(normalizePosition),
     tradeoffs: input.tradeoffs ?? [],
     caveats: input.caveats ?? [],
     evidence: input.evidence ?? [],
     diffs: input.diffs ?? [],
     links: input.links ?? [],
-    state: existing?.state ?? (preset === null ? 'open' : 'answered'),
-    answer: existing?.answer ?? preset,
+    state: staleCouncilPick ? 'open' : (existing?.state ?? (preset === null ? 'open' : 'answered')),
+    answer: staleCouncilPick ? null : (existing?.answer ?? preset),
     submittedAt: existing?.submittedAt ?? null,
     pickedUpAt: existing?.pickedUpAt ?? null,
     resolution: existing?.resolution ?? null,

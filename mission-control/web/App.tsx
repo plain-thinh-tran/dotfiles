@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
+import { isSplit } from '../src/council';
 import { chosenLabel, isAwaitingPickup, isReadyToSubmit, optionsFor } from '../src/prompt';
 import type { Agent, LiveState, Option, Run, Thread, Todo, TodoState } from '../src/types';
 import { Avatar, AvatarStack } from './Avatar';
@@ -375,7 +376,6 @@ function CouncilIcon({ title }: { title?: string }) {
 function answerExcerpt(todo: Todo): string | null {
   const answer = todo.answer;
   if (answer === null || todo.state !== 'answered') return null;
-  if (answer.question === true) return `Asking: ${answer.text.trim().split('\n')[0] ?? ''}`;
   if (answer.deferred) return 'Deferred';
   if (answer.optionId !== null) return optionsFor(todo).find((o) => o.id === answer.optionId)?.label ?? answer.optionId;
   const note = answer.text.trim().split('\n')[0] ?? '';
@@ -508,6 +508,7 @@ function TodoRow(props: { entry: Entry; selected: boolean; showRun: boolean; lea
       <span className="todo-body">
         <span className="todo-head">
           <span className="todo-title">{todo.title}</span>
+          {todo.category === 'needs-you' && isSplit(todo.positions) ? <span className="todo-split">split</span> : null}
           {unread > 0 ? (
             <span className="chat-count" title="The agent replied">
               <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
@@ -693,6 +694,21 @@ function OptionCard(props: {
   );
 }
 
+function ChairsCall({ todo, agents }: { todo: Todo; agents: Agent[] }) {
+  const { recommendation } = todo;
+  if (recommendation === null) return null;
+  const label = optionsFor(todo).find((option) => option.id === recommendation.optionId)?.label;
+  return (
+    <div className="chairs-call">
+      <Avatar agent={agentOf(agents, recommendation.by)} size={16} />
+      <div className="chairs-body">
+        <span>{label === undefined ? "Chair's call" : `Chair's call: ${label}`}</span>
+        <ClampText key={recommendation.summary} text={recommendation.summary} lines={2} className="muted" />
+      </div>
+    </div>
+  );
+}
+
 function PositionCard({ todo, position, agents, onCopy }: { todo: Todo; position: Todo['positions'][number]; agents: Agent[]; onCopy: (text: string) => void }) {
   const agent = agentOf(agents, position.agent);
   const number = optionNumber(optionsFor(todo), position.optionId);
@@ -837,10 +853,10 @@ function AnswerBar(props: DetailProps) {
               className="btn btn-async"
               data-status={props.busy?.kind === 'ask' ? props.busy.status : undefined}
               disabled={props.draft.text.trim() === '' || props.busy !== null}
-              title="Send your note as a question instead of an answer"
+              title="Ask the agent a question right now, without answering"
               onClick={props.onAsk}
             >
-              <AsyncLabel status={props.busy?.kind === 'ask' ? props.busy.status : undefined} idle="Ask the agent" done="✓ Asked" />
+              <AsyncLabel status={props.busy?.kind === 'ask' ? props.busy.status : undefined} idle="Ask the agent" />
             </button>
             <button
               className="btn btn-primary btn-async"
@@ -907,6 +923,7 @@ function DetailPane(props: DetailProps) {
             </div>
           </section>
         ) : null}
+        {todo.recommendation !== null && isSplit(todo.positions) ? <ChairsCall todo={todo} agents={agents} /> : null}
         {todo.positions.length > 0 ? <PositionsSection key={`${run.runId}/${todo.id}`} todo={todo} agents={agents} onCopy={props.onCopy} /> : null}
         {todo.diffs !== undefined && todo.diffs.length > 0 ? (
           <section>
@@ -1039,14 +1056,13 @@ export function App() {
     }
   }
 
-  async function answer(next: Draft, kind: 'save' | 'accept' | 'ask'): Promise<void> {
+  async function answer(next: Draft, kind: 'save' | 'accept'): Promise<void> {
     if (entry === null || entryKey === null) return;
     const target = entry;
     const targetKey = entryKey;
-    setDrafts((prev) => ({ ...prev, [targetKey]: kind === 'ask' ? { optionId: null, text: '' } : next }));
+    setDrafts((prev) => ({ ...prev, [targetKey]: next }));
     setBusy({ kind, status: 'saving' });
-    const body = { optionId: next.optionId, text: next.text, deferred: false, ...(kind === 'ask' ? { question: true } : {}) };
-    const ok = await perform(`${todoPath(target)}/answer`, body);
+    const ok = await perform(`${todoPath(target)}/answer`, { optionId: next.optionId, text: next.text, deferred: false });
     if (!ok) return setBusy(null);
     setBusy({ kind, status: 'saved' });
     await new Promise((resolve) => setTimeout(resolve, prefersReducedMotion() ? 0 : SAVED_MS));
@@ -1066,7 +1082,12 @@ export function App() {
   }
 
   async function ask(): Promise<void> {
-    if (draft !== null && busy === null && draft.text.trim() !== '') await answer({ optionId: null, text: draft.text }, 'ask');
+    if (entry === null || entryKey === null || draft === null || busy !== null || draft.text.trim() === '') return;
+    const text = draft.text;
+    setBusy({ kind: 'ask', status: 'saving' });
+    const ok = await perform(`${todoPath(entry)}/ask`, { text });
+    setBusy(null);
+    if (ok) setDrafts((prev) => ({ ...prev, [entryKey]: { ...draft, text: '' } }));
   }
 
   async function reopen(): Promise<void> {

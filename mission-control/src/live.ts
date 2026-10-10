@@ -104,6 +104,10 @@ function resolveState(
   return alive ? 'idle' : 'dead';
 }
 
+export async function activeWaits(): Promise<Set<string>> {
+  return pendingWaits(await listProcesses());
+}
+
 export async function computeLiveInfo(runs: Run[]): Promise<Map<string, LiveInfo>> {
   const groups = groupRunsBySession(runs);
   const sessions = conductorSessions([...groups.keys()]);
