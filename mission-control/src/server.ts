@@ -1,8 +1,10 @@
 import { watch } from 'node:fs';
 import index from '../web/index.html';
 import { avatarPath, downloadMissingAvatars, isAvatarId } from './avatarFiles';
+import { answerWithFallback } from './fallbackAsk';
 import { activeWaits, computeLiveInfo } from './live';
 import { isAwaitingPickup, isLocked, isReadyToSubmit, pendingQuestion, threadPrompt } from './prompt';
+import { questionsOf } from './questions';
 import {
   addQuestion,
   addReply,
@@ -14,6 +16,7 @@ import {
   pruneRuns,
   readArchived,
   readSteps,
+  recentlyPolled,
   ensureStepsDir,
   stepsDir,
   readRun,
@@ -38,13 +41,15 @@ const encoder = new TextEncoder();
 const clients = new Set<Client>();
 let liveStates = new Map<string, LiveInfo>();
 let lastFocusedAt = 0;
+const lastModPollAt = new Map<string, number>();
+const fallbackRunning = new Set<string>();
 
 function wantsArchived(req: Request): boolean {
   return new URL(req.url).searchParams.get('archived') === '1';
 }
 
 function currentThreads(showArchived: boolean) {
-  return buildThreads(listRuns(), liveStates, readArchived(), showArchived, readSteps());
+  return buildThreads(listRuns(), liveStates, readArchived(), showArchived, readSteps(), lastModPollAt);
 }
 
 function notFound(message: string): Response {
@@ -206,7 +211,32 @@ async function askTodo(req: TodoRequest): Promise<Response> {
   if (text === null) return Response.json({ error: 'Invalid ask body' }, { status: 400 });
   const { runId, todoId } = req.params;
   if (!(await addQuestion(runId, todoId, text))) return notFound(`Todo ${runId}/${todoId} not found`);
+  void answerAsFallback(runId, todoId);
   return Response.json({ ok: true });
+}
+
+async function answerAsFallback(runId: string, todoId: string): Promise<void> {
+  const key = `${runId}/${todoId}`;
+  const run = readRun(runId);
+  if (run === null || fallbackRunning.has(key)) return;
+  const { conductorSessionId, workspacePath } = run.session;
+  if (recentlyPolled(lastModPollAt.get(conductorSessionId), Date.now())) return;
+  const question = questionsOf(run).find((candidate) => candidate.todoId === todoId);
+  if (question === undefined) return;
+  fallbackRunning.add(key);
+  try {
+    const answer = await answerWithFallback(question, conductorSessionId, workspacePath);
+    const current = readRun(runId)?.todos.find((todo) => todo.id === todoId);
+    if (answer !== null && current !== undefined && pendingQuestion(current) === question.text) {
+      await addReply(runId, todoId, answer);
+    }
+  } finally {
+    fallbackRunning.delete(key);
+  }
+  const latest = readRun(runId)?.todos.find((todo) => todo.id === todoId);
+  if (latest !== undefined && pendingQuestion(latest) !== null && pendingQuestion(latest) !== question.text) {
+    void answerAsFallback(runId, todoId);
+  }
 }
 
 async function replyTodo(req: TodoRequest): Promise<Response> {
@@ -215,32 +245,6 @@ async function replyTodo(req: TodoRequest): Promise<Response> {
   const { runId, todoId } = req.params;
   if (!(await addReply(runId, todoId, text))) return notFound(`Todo ${runId}/${todoId} not found`);
   return Response.json({ ok: true });
-}
-
-function questionsOf(run: Run) {
-  return run.todos.flatMap((todo) => {
-    const text = pendingQuestion(todo);
-    if (text === null) return [];
-    return [
-      {
-        runId: run.runId,
-        todoId: todo.id,
-        title: todo.title,
-        question: todo.question,
-        text,
-        recommendation: todo.recommendation,
-        options: todo.options.map((option) => ({ id: option.id, label: option.label })),
-        positions: todo.positions.map((position) => ({
-          agent: position.agent,
-          optionId: position.optionId,
-          summary: position.summary,
-        })),
-        tradeoffs: todo.tradeoffs,
-        caveats: todo.caveats,
-        conversation: todo.conversation ?? [],
-      },
-    ];
-  });
 }
 
 const workWaiters = new Set<() => void>();
@@ -281,11 +285,13 @@ async function sessionWork(req: Request & { params: { sessionId: string } }, tim
   const waitSeconds = Math.min(Number(new URL(req.url).searchParams.get('wait') ?? '0') || 0, 50);
   const deadline = Date.now() + waitSeconds * 1000;
   if (waitSeconds > 0) timeout(req, waitSeconds + 10);
+  lastModPollAt.set(req.params.sessionId, Date.now());
   let work = await collectWork(req.params.sessionId);
   while (work.questions.length === 0 && work.submitted.every((s) => s.waitActive) && Date.now() < deadline) {
     await nextChange(deadline - Date.now());
     work = await collectWork(req.params.sessionId);
   }
+  lastModPollAt.set(req.params.sessionId, Date.now());
   return Response.json(work);
 }
 
@@ -398,6 +404,7 @@ await refreshLive();
 void downloadMissingAvatars().catch((err) => console.error('Avatar download failed', err));
 
 const server = Bun.serve({
+  development: process.env.MC_DEV === '1',
   hostname: '127.0.0.1',
   port: PORT,
   routes: {

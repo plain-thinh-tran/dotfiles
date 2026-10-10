@@ -4,6 +4,7 @@ import { Avatar } from './Avatar';
 import { formatStamp } from './History';
 
 const QUICK_ANSWER_MS = 45000;
+const FALLBACK_ANSWER_MS = 75000;
 
 type Message = NonNullable<Todo['conversation']>[number];
 
@@ -12,19 +13,20 @@ function pendingMessage(messages: Message[]): Message | undefined {
   return latest?.pending === true ? latest : undefined;
 }
 
-export function Conversation({ messages, agents }: { messages: Message[]; agents: Agent[] }) {
+export function Conversation({ messages, agents, instantAsk }: { messages: Message[]; agents: Agent[]; instantAsk: boolean }) {
+  const patienceMs = instantAsk ? QUICK_ANSWER_MS : FALLBACK_ANSWER_MS;
   const agent = agents.find((candidate) => candidate.role === 'orchestrator') ?? agents[0];
   const pending = pendingMessage(messages);
   const pendingAt = pending?.at;
   const [, setTick] = useState(0);
   useEffect(() => {
     if (pendingAt === undefined) return;
-    const remaining = new Date(pendingAt).getTime() + QUICK_ANSWER_MS - Date.now();
+    const remaining = new Date(pendingAt).getTime() + patienceMs - Date.now();
     if (remaining <= 0) return;
     const timer = setTimeout(() => setTick((tick) => tick + 1), remaining);
     return () => clearTimeout(timer);
-  }, [pendingAt]);
-  const waiting = pending !== undefined && Date.now() - new Date(pending.at).getTime() < QUICK_ANSWER_MS;
+  }, [pendingAt, patienceMs]);
+  const waiting = pending !== undefined && Date.now() - new Date(pending.at).getTime() < patienceMs;
   return (
     <div className="conversation">
       {messages.map((message, index) => (
@@ -43,6 +45,7 @@ export function Conversation({ messages, agents }: { messages: Message[]; agents
             <i />
             <i />
             <i />
+            <span className="typing-note">{instantAsk ? 'Asking the agent…' : 'Asking a copy of the session… (about 10s)'}</span>
           </div>
         </div>
       ) : null}

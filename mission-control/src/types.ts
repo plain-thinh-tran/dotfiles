@@ -96,6 +96,7 @@ export type Thread = {
   sessionId: string;
   session: Session;
   archived: boolean;
+  instantAsk: boolean;
   displayName: string;
   description: string;
   summary: string;

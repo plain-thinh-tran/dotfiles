@@ -2356,3 +2356,9 @@ button.block:hover {
   color: var(--dim);
   font-size: 11px;
 }
+
+.bubble.typing .typing-note {
+  margin-left: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}

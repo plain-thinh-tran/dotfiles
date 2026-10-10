@@ -18,13 +18,29 @@ type SessionRow = {
   user_set_workspace_name: number | null;
   pr_title: string | null;
   branch: string | null;
+  updated_at: string | null;
+  last_user_message_at: string | null;
 };
 
-type ConductorSession = { status: string; names: ConductorNames };
+type ConductorSession = { status: string; names: ConductorNames; activityAt: string | null };
+
+function parseConductorTime(text: string | null): number | null {
+  if (text === null || text === '') return null;
+  const parsed = Date.parse(text.includes('T') ? text : `${text.replace(' ', 'T')}Z`);
+  return Number.isNaN(parsed) ? null : parsed;
+}
+
+function latestActivity(row: SessionRow): string | null {
+  const times = [parseConductorTime(row.updated_at), parseConductorTime(row.last_user_message_at)].filter(
+    (time): time is number => time !== null,
+  );
+  return times.length === 0 ? null : new Date(Math.max(...times)).toISOString();
+}
 
 function toConductorSession(row: SessionRow): ConductorSession {
   return {
     status: row.status,
+    activityAt: latestActivity(row),
     names: {
       workspaceName: row.workspace_name ?? '',
       userSetName: row.user_set_workspace_name === 1,
@@ -44,7 +60,7 @@ function conductorSessions(sessionIds: string[]): Map<string, ConductorSession> 
       const marks = sessionIds.map(() => '?').join(',');
       const rows = db
         .query<SessionRow, string[]>(
-          `select s.id, s.status, s.title, w.workspace_name, w.user_set_workspace_name, w.pr_title, w.branch
+          `select s.id, s.status, s.title, s.updated_at, s.last_user_message_at, w.workspace_name, w.user_set_workspace_name, w.pr_title, w.branch
            from sessions s left join workspaces w on w.local_id = s.workspace_id
            where s.id in (${marks})`,
         )
@@ -99,8 +115,8 @@ function resolveState(
   alive: boolean,
 ): LiveState {
   if (dbStatus === 'error') return 'error';
-  if (dbStatus === 'working') return 'working';
-  if (waitPending || dbStatus === 'waiting') return 'waiting_on_you';
+  if (dbStatus === 'working' || dbStatus === 'waiting') return waitPending ? 'waiting_on_you' : 'working';
+  if (waitPending) return 'waiting_on_you';
   return alive ? 'idle' : 'dead';
 }
 
@@ -123,6 +139,7 @@ export async function computeLiveInfo(runs: Run[]): Promise<Map<string, LiveInfo
     infos.set(sessionId, {
       state: resolveState(session?.status, waitPending, alive),
       names: session?.names ?? null,
+      activityAt: session?.activityAt ?? null,
     });
   });
   return infos;

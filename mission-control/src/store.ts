@@ -35,7 +35,7 @@ export type ConductorNames = {
   title: string;
 };
 
-export type LiveInfo = { state: LiveState; names: ConductorNames | null };
+export type LiveInfo = { state: LiveState; names: ConductorNames | null; activityAt: string | null };
 
 export type PushInput = {
   runId: string;
@@ -338,14 +338,36 @@ function categoryOf(input: TodoInput): TodoCategory {
   return councilAgrees(input.positions ?? [], input.recommendation ?? null) ? 'key-decision' : 'needs-you';
 }
 
+function toList(raw: unknown): unknown[] {
+  if (Array.isArray(raw)) return raw;
+  if (typeof raw === 'string' && raw.trim() !== '') return raw.split(/\n+|;\s+/).map((part) => part.trim()).filter((part) => part !== '');
+  return [];
+}
+
+function toStrings(raw: unknown): string[] {
+  return toList(raw).map((item) => (typeof item === 'string' ? item : JSON.stringify(item)));
+}
+
 function normalizePosition(position: Position): Position {
-  const raw: unknown = position.evidence;
-  if (raw === undefined || Array.isArray(raw)) return position;
-  return { ...position, evidence: typeof raw === 'string' && raw.trim() !== '' ? raw.split(/;\s+/) : [] };
+  return position.evidence === undefined ? position : { ...position, evidence: toStrings(position.evidence) };
+}
+
+function normalizeTodo(todo: Todo): Todo {
+  return {
+    ...todo,
+    options: toList(todo.options) as Todo['options'],
+    positions: (toList(todo.positions) as Position[]).map(normalizePosition),
+    tradeoffs: toStrings(todo.tradeoffs),
+    caveats: toStrings(todo.caveats),
+    evidence: toList(todo.evidence).map((item) => (typeof item === 'string' ? { ref: item } : item)) as Todo['evidence'],
+    links: toList(todo.links) as Todo['links'],
+    ...(todo.diffs !== undefined ? { diffs: toList(todo.diffs) as NonNullable<Todo['diffs']> } : {}),
+    ...(todo.conversation !== undefined ? { conversation: toList(todo.conversation) as NonNullable<Todo['conversation']> } : {}),
+  };
 }
 
 export function normalizeRun(run: Run): Run {
-  return { ...run, todos: run.todos.map((todo) => ({ ...todo, positions: todo.positions.map(normalizePosition) })) };
+  return { ...run, todos: toList(run.todos).map((todo) => normalizeTodo(todo as Todo)) };
 }
 
 function presetAnswer(input: TodoInput, category: TodoCategory, now: string): Todo['answer'] {
@@ -367,7 +389,7 @@ function toTodo(input: TodoInput, existing: Todo | undefined, now: string): Todo
     question: input.question ?? '',
     recommendation: input.recommendation ?? null,
     options: input.options ?? [],
-    positions: (input.positions ?? []).map(normalizePosition),
+    positions: (toList(input.positions) as Position[]).map(normalizePosition),
     tradeoffs: input.tradeoffs ?? [],
     caveats: input.caveats ?? [],
     evidence: input.evidence ?? [],
@@ -387,7 +409,7 @@ export function mergeRun(existing: Run | null, input: PushInput, fallbackSession
   const now = new Date().toISOString();
   const existingTodos = existing?.todos ?? [];
   const existingById = new Map(existingTodos.map((todo) => [todo.id, todo]));
-  const pushed = (input.todos ?? []).map((todo) => toTodo(todo, existingById.get(todo.id), now));
+  const pushed = (input.todos ?? []).map((todo) => normalizeTodo(toTodo(todo, existingById.get(todo.id), now)));
   const pushedIds = new Set(pushed.map((todo) => todo.id));
   const kept = existingTodos.filter((todo) => !pushedIds.has(todo.id));
   return {
@@ -450,25 +472,45 @@ function summaryOf(runs: Run[]): string {
   return newestFirst.find((run) => run.summary !== undefined && run.summary !== '')?.summary ?? '';
 }
 
-function toThread(sessionId: string, groupRuns: Run[], info: LiveInfo | undefined, archived: boolean, steps: StepsFile | undefined): Thread {
+function liveFor(state: LiveState, runs: Run[]): LiveState {
+  const needsThinh = countTodos(runs, (todo) => todo.state === 'open') + countTodos(runs, isReadyToSubmit) > 0;
+  return state === 'waiting_on_you' && !needsThinh ? 'idle' : state;
+}
+
+function latestActivity(times: (string | null | undefined)[]): string {
+  const stamps = times
+    .map((time) => (time === null || time === undefined ? Number.NaN : Date.parse(time)))
+    .filter((stamp) => !Number.isNaN(stamp));
+  return new Date(Math.max(...stamps)).toISOString();
+}
+
+function toThread(
+  sessionId: string,
+  groupRuns: Run[],
+  info: LiveInfo | undefined,
+  archived: boolean,
+  steps: StepsFile | undefined,
+  instantAsk: boolean,
+): Thread {
   const runs = groupRuns.map(sortTodos);
   const latest = [...runs].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0] as Run;
   const names = info?.names ?? null;
   return {
     sessionId,
     archived,
+    instantAsk,
     session: latest.session,
     displayName: displayNameOf(names, latest.session.workspaceName),
     description: descriptionOf(names, runs),
     summary: summaryOf(runs),
-    live: info?.state ?? 'dead',
+    live: liveFor(info?.state ?? 'dead', runs),
     step: steps?.current ?? null,
     steps: steps?.history ?? [],
     agents: mergeAgents(runs),
     runs,
     openCount: countTodos(runs, (todo) => todo.state === 'open'),
     answeredCount: countTodos(runs, isReadyToSubmit),
-    updatedAt: latest.updatedAt,
+    updatedAt: latestActivity([latest.updatedAt, steps?.current?.at, steps?.history[steps.history.length - 1]?.at, info?.activityAt]),
   };
 }
 
@@ -481,17 +523,24 @@ export function groupRunsBySession(runs: Run[]): Map<string, Run[]> {
   return groups;
 }
 
+export const INSTANT_ASK_TTL_MS = 60000;
+
+export function recentlyPolled(lastPollAt: number | undefined, now: number): boolean {
+  return lastPollAt !== undefined && now - lastPollAt < INSTANT_ASK_TTL_MS;
+}
+
 export function buildThreads(
   runs: Run[],
   live: ReadonlyMap<string, LiveInfo>,
   archived: ReadonlySet<string>,
   showArchived: boolean,
   steps: ReadonlyMap<string, StepsFile>,
+  modPolls: ReadonlyMap<string, number>,
 ): Thread[] {
   const threads = [...groupRunsBySession(runs)]
     .filter(([sessionId]) => showArchived || !archived.has(sessionId))
     .map(([sessionId, group]) =>
-      toThread(sessionId, group, live.get(sessionId), archived.has(sessionId), steps.get(sessionId)),
+      toThread(sessionId, group, live.get(sessionId), archived.has(sessionId), steps.get(sessionId), recentlyPolled(modPolls.get(sessionId), Date.now())),
     );
   return threads.sort(
     (a, b) =>

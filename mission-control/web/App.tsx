@@ -788,6 +788,7 @@ function AnswerSummary({ todo }: { todo: Todo }) {
 }
 
 type DetailProps = {
+  instantAsk: boolean;
   busy: Busy | null;
   entry: Entry;
   agents: Agent[];
@@ -903,7 +904,7 @@ function DetailPane(props: DetailProps) {
           <Lifecycle state={todo.state} />
         </header>
         {todo.question !== '' ? <QuestionText text={todo.question} /> : null}
-        {todo.conversation !== undefined && todo.conversation.length > 0 ? <Conversation messages={todo.conversation} agents={agents} /> : null}
+        {todo.conversation !== undefined && todo.conversation.length > 0 ? <Conversation messages={todo.conversation} agents={agents} instantAsk={props.instantAsk} /> : null}
         {options.length > 0 ? (
           <section>
             <h3>Options</h3>
@@ -1303,6 +1304,7 @@ export function App() {
             <DetailPane
               entry={entry}
               agents={thread.agents}
+              instantAsk={thread.instantAsk}
               draft={draft}
               onDraft={patchDraft}
               onAccept={() => void accept()}

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { mergeRun } from './store';
+import { buildThreads, mergeRun } from './store';
 import type { Position, Run, Session, Todo } from './types';
 
 const SESSION: Session = {
@@ -74,5 +74,35 @@ describe('key-decision guard', () => {
     const todo = first(push([pick('codex', 'a'), pick('grok', 'b')], 'a', agreed));
     expect(todo.state).toBe('answered');
     expect(todo.answer?.optionId).toBe('b');
+  });
+});
+
+describe('thread activity', () => {
+  test('updatedAt is the latest of the runs, the steps and the Conductor session activity', () => {
+    const run = push([pick('codex', 'a'), pick('grok', 'a')], 'a');
+    run.updatedAt = '2026-10-10T08:00:00.000Z';
+    const steps = new Map([
+      [
+        's1',
+        {
+          current: { text: 'now', at: '2026-10-10T09:00:00.000Z', agent: null },
+          history: [{ text: 'now', at: '2026-10-10T10:00:00.000Z', agent: null }],
+        },
+      ],
+    ]);
+    const info = new Map([['s1', { state: 'idle' as const, names: null, activityAt: '2026-10-10T11:30:00.000Z' }]]);
+    const [thread] = buildThreads([run], info, new Set(), false, steps, new Map());
+    expect(thread?.updatedAt).toBe('2026-10-10T11:30:00.000Z');
+    const [quiet] = buildThreads([run], new Map(), new Set(), false, new Map(), new Map());
+    expect(quiet?.updatedAt).toBe('2026-10-10T08:00:00.000Z');
+  });
+
+  test('instantAsk is true only when the session polled within the last minute', () => {
+    const run = push([pick('codex', 'a'), pick('grok', 'a')], 'a');
+    const fresh = buildThreads([run], new Map(), new Set(), false, new Map(), new Map([['s1', Date.now() - 5000]]));
+    const stale = buildThreads([run], new Map(), new Set(), false, new Map(), new Map([['s1', Date.now() - 120000]]));
+    expect(fresh[0]?.instantAsk).toBe(true);
+    expect(stale[0]?.instantAsk).toBe(false);
+    expect(buildThreads([run], new Map(), new Set(), false, new Map(), new Map())[0]?.instantAsk).toBe(false);
   });
 });
