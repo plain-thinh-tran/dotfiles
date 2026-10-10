@@ -161,6 +161,12 @@
         "source": "github",
         "repo": "openai/codex-plugin-cc"
       }
+    },
+    "scape-marketplace": {
+      "source": {
+        "source": "github",
+        "repo": "fliptables/scape-marketplace"
+      }
     }
   },
   "outputStyle": "Concise",

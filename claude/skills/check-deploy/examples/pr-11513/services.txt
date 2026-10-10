@@ -1,0 +1,5 @@
+discord-webhook-handler*
+ms-teams-webhook-handler*
+nango-webhook-handler*
+slack-webhook-handler*
+workos-webhook-handler*
