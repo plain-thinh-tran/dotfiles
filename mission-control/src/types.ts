@@ -8,11 +8,20 @@ export type Agent = {
   model: string;
 };
 
-export type TodoKind = 'decision' | 'question' | 'approval';
+export type TodoKind = 'decision' | 'question' | 'approval' | 'finding';
 
 export type TodoCategory = 'needs-you' | 'key-decision';
 
-export type TodoState = 'open' | 'answered' | 'submitted' | 'picked_up' | 'done' | 'dismissed';
+export type TodoState =
+  | 'open'
+  | 'answered'
+  | 'submitted'
+  | 'picked_up'
+  | 'done'
+  | 'dismissed'
+  | 'understood'
+  | 'commented'
+  | 'dropped';
 
 export type Option = {
   id: string;
@@ -39,6 +48,7 @@ export type Answer = {
   text: string;
   deferred: boolean;
   question?: boolean;
+  comment?: true;
   answeredAt: string;
   preset?: boolean;
 };
@@ -63,7 +73,19 @@ export type Todo = {
   resolution: string | null;
   doneAt?: string;
   diffs?: { path: string; patch: string }[];
-  conversation?: { from: 'thinh' | 'agent'; text: string; at: string; pending?: boolean }[];
+  severity?: string;
+  verification?: string;
+  draftComment?: string;
+  suggestedQuestions?: string[];
+  conversation?: {
+    from: 'thinh' | 'agent';
+    text: string;
+    at: string;
+    pending?: boolean;
+    fallbackFailed?: boolean;
+    submittedAt?: string;
+    deliveredAt?: string;
+  }[];
 };
 
 export type Session = {
@@ -75,19 +97,25 @@ export type Session = {
   pr: { number: number; url: string } | null;
 };
 
+export type RunMode = 'build' | 'review' | 'self-check';
+
+export type RunPr = { number: number; url: string; author: string };
+
 export type Run = {
   version: 1;
   runId: string;
   skill: string;
   title: string;
   summary?: string;
+  mode?: RunMode;
+  pr?: RunPr;
   status: 'active' | 'done';
   createdAt: string;
   updatedAt: string;
   session: Session;
   agents: Agent[];
   todos: Todo[];
-  submissions: { id: string; at: string; todoIds: string[] }[];
+  submissions: { id: string; at: string; todoIds: string[]; questionTodoIds?: string[] }[];
 };
 
 export type LiveState = 'working' | 'waiting_on_you' | 'idle' | 'dead' | 'error';
@@ -97,6 +125,8 @@ export type Thread = {
   session: Session;
   archived: boolean;
   instantAsk: boolean;
+  mode: RunMode;
+  pr: RunPr | null;
   displayName: string;
   description: string;
   summary: string;

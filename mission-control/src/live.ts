@@ -18,6 +18,9 @@ type SessionRow = {
   user_set_workspace_name: number | null;
   pr_title: string | null;
   branch: string | null;
+  workspace_path: string | null;
+  directory_name: string | null;
+  repo_name: string | null;
   updated_at: string | null;
   last_user_message_at: string | null;
 };
@@ -47,6 +50,9 @@ function toConductorSession(row: SessionRow): ConductorSession {
       prTitle: row.pr_title ?? '',
       branch: row.branch ?? '',
       title: row.title ?? '',
+      workspacePath: row.workspace_path ?? '',
+      directoryName: row.directory_name ?? '',
+      repoName: row.repo_name ?? '',
     },
   };
 }
@@ -60,8 +66,10 @@ function conductorSessions(sessionIds: string[]): Map<string, ConductorSession> 
       const marks = sessionIds.map(() => '?').join(',');
       const rows = db
         .query<SessionRow, string[]>(
-          `select s.id, s.status, s.title, s.updated_at, s.last_user_message_at, w.workspace_name, w.user_set_workspace_name, w.pr_title, w.branch
+          `select s.id, s.status, s.title, s.updated_at, s.last_user_message_at, w.workspace_name, w.user_set_workspace_name, w.pr_title, w.branch,
+                  w.workspace_path, w.directory_name, r.name as repo_name
            from sessions s left join workspaces w on w.local_id = s.workspace_id
+           left join repos r on r.id = w.repository_id
            where s.id in (${marks})`,
         )
         .all(...sessionIds);
@@ -124,18 +132,21 @@ export async function activeWaits(): Promise<Set<string>> {
   return pendingWaits(await listProcesses());
 }
 
-export async function computeLiveInfo(runs: Run[]): Promise<Map<string, LiveInfo>> {
+export async function computeLiveInfo(runs: Run[], stepSessionIds: string[] = []): Promise<Map<string, LiveInfo>> {
   const groups = groupRunsBySession(runs);
-  const sessions = conductorSessions([...groups.keys()]);
+  const sessionIds = [...new Set([...groups.keys(), ...stepSessionIds])];
+  const sessions = conductorSessions(sessionIds);
   const processes = await listProcesses();
   const claudePids = processes.filter((p) => p.command.includes('/claude')).map((p) => p.pid);
   const aliveCwds = await cwdsOf(claudePids);
   const waits = pendingWaits(processes);
   const infos = new Map<string, LiveInfo>();
-  groups.forEach((group, sessionId) => {
-    const waitPending = group.some((r) => waits.has(r.runId));
-    const alive = aliveCwds.has((group[0] as Run).session.workspacePath);
+  sessionIds.forEach((sessionId) => {
+    const group = groups.get(sessionId) ?? [];
     const session = sessions.get(sessionId);
+    const waitPending = group.some((r) => waits.has(r.runId));
+    const workspacePath = group[0]?.session.workspacePath ?? session?.names.workspacePath ?? '';
+    const alive = workspacePath !== '' && aliveCwds.has(workspacePath);
     infos.set(sessionId, {
       state: resolveState(session?.status, waitPending, alive),
       names: session?.names ?? null,

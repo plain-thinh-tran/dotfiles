@@ -3,12 +3,23 @@ import index from '../web/index.html';
 import { avatarPath, downloadMissingAvatars, isAvatarId } from './avatarFiles';
 import { answerWithFallback } from './fallbackAsk';
 import { activeWaits, computeLiveInfo } from './live';
-import { isAwaitingPickup, isLocked, isReadyToSubmit, pendingQuestion, threadPrompt } from './prompt';
+import {
+  isAwaitingPickup,
+  isDeliverableQuestion,
+  isLocked,
+  isReadyToSubmit,
+  latestThinhMessage,
+  pendingQuestion,
+  threadPrompt,
+} from './prompt';
 import { questionsOf } from './questions';
 import {
   addQuestion,
   addReply,
   buildThreads,
+  markFallbackFailed,
+  patchLatestThinh,
+  withoutSubmission,
   ensureRunsDir,
   type LiveInfo,
   groupRunsBySession,
@@ -121,30 +132,62 @@ async function dismissTodo(req: TodoRequest): Promise<Response> {
 async function reopenTodo(req: TodoRequest): Promise<Response> {
   return await mutateTodo(
     req,
-    (todo) => todo.state === 'answered' || todo.state === 'dismissed',
+    (todo) => todo.state === 'answered' || todo.state === 'dismissed' || todo.state === 'understood' || todo.state === 'dropped',
     (todo) => {
       todo.state = 'open';
       todo.answer = null;
+      delete todo.doneAt;
     },
   );
 }
 
-type SubmissionResult = { count: number; submissionId: string | null };
+function settleFinding(req: TodoRequest, state: 'understood' | 'dropped'): Promise<Response> {
+  return mutateTodo(
+    req,
+    (todo) => todo.kind === 'finding' && !isLocked(todo),
+    (todo) => {
+      todo.state = state;
+      todo.doneAt = new Date().toISOString();
+    },
+  );
+}
+
+async function commentOnFinding(req: TodoRequest): Promise<Response> {
+  const text = await textBody(req);
+  if (text === null) return Response.json({ error: 'Invalid comment body' }, { status: 400 });
+  return await mutateTodo(
+    req,
+    (todo) => todo.kind === 'finding' && !isLocked(todo),
+    (todo) => {
+      todo.state = 'answered';
+      todo.answer = { optionId: null, text, deferred: false, answeredAt: new Date().toISOString(), comment: true };
+    },
+  );
+}
+
+type SubmissionResult = { count: number; questions: number; submissionId: string | null };
 
 function submitRun(runId: string, at: string): SubmissionResult {
   const run = readRun(runId);
-  if (run === null) return { count: 0, submissionId: null };
+  if (run === null) return { count: 0, questions: 0, submissionId: null };
   const answered = run.todos.filter(isReadyToSubmit);
-  if (answered.length === 0) return { count: 0, submissionId: null };
+  const asked = run.todos.filter((todo) => isDeliverableQuestion(todo, Date.now()));
+  if (answered.length === 0 && asked.length === 0) return { count: 0, questions: 0, submissionId: null };
   answered.forEach((todo) => {
     todo.state = 'submitted';
     todo.submittedAt = at;
   });
+  asked.forEach((todo) => patchLatestThinh(todo, { submittedAt: at }));
   const submissionId = crypto.randomUUID();
-  run.submissions.push({ id: submissionId, at, todoIds: answered.map((todo) => todo.id) });
+  run.submissions.push({
+    id: submissionId,
+    at,
+    todoIds: answered.map((todo) => todo.id),
+    questionTodoIds: asked.map((todo) => todo.id),
+  });
   run.updatedAt = at;
   writeRun(run);
-  return { count: answered.length, submissionId };
+  return { count: answered.length, questions: asked.length, submissionId };
 }
 
 async function submitThread(req: ThreadRequest): Promise<Response> {
@@ -152,13 +195,15 @@ async function submitThread(req: ThreadRequest): Promise<Response> {
   if (runs === undefined) return notFound('Thread not found');
   const at = new Date().toISOString();
   let submitted = 0;
+  let questions = 0;
   const submissionIds: string[] = [];
   for (const run of runs) {
     const result = await withRunLock(run.runId, () => submitRun(run.runId, at));
     submitted += result.count;
+    questions += result.questions;
     if (result.submissionId !== null) submissionIds.push(result.submissionId);
   }
-  return Response.json({ submitted, submissionIds });
+  return Response.json({ submitted, questions, submissionIds });
 }
 
 async function unsubmitThread(req: ThreadRequest): Promise<Response> {
@@ -179,12 +224,19 @@ async function unsubmitThread(req: ThreadRequest): Promise<Response> {
       todo.state = 'answered';
       todo.submittedAt = null;
     });
-    if (waiting.length > 0) {
+    const asked = run.todos.filter((todo) => (submission.questionTodoIds ?? []).includes(todo.id));
+    const undelivered = asked.filter((todo) => {
+      const latest = latestThinhMessage(todo);
+      return latest?.submittedAt === submission.at && latest.deliveredAt === undefined;
+    });
+    undelivered.forEach(withoutSubmission);
+    const reverted = waiting.length + undelivered.length;
+    if (reverted > 0) {
       run.submissions = run.submissions.filter((candidate) => candidate.id !== submissionId);
       run.updatedAt = new Date().toISOString();
       writeRun(run);
     }
-    return { reverted: waiting.length, pickedUp: targets.length - waiting.length };
+    return { reverted, pickedUp: targets.length - waiting.length + asked.length - undelivered.length };
   });
   return Response.json(result);
 }
@@ -223,11 +275,17 @@ async function answerAsFallback(runId: string, todoId: string): Promise<void> {
   if (recentlyPolled(lastModPollAt.get(conductorSessionId), Date.now())) return;
   const question = questionsOf(run).find((candidate) => candidate.todoId === todoId);
   if (question === undefined) return;
+  if (workspacePath === '') {
+    await markFallbackFailed(runId, todoId, question.text);
+    return;
+  }
   fallbackRunning.add(key);
   try {
     const answer = await answerWithFallback(question, conductorSessionId, workspacePath);
     const current = readRun(runId)?.todos.find((todo) => todo.id === todoId);
-    if (answer !== null && current !== undefined && pendingQuestion(current) === question.text) {
+    if (answer === null) {
+      await markFallbackFailed(runId, todoId, question.text);
+    } else if (current !== undefined && pendingQuestion(current) === question.text) {
       await addReply(runId, todoId, answer);
     }
   } finally {
@@ -307,9 +365,13 @@ function getPresence(): Response {
   return Response.json({ focused: Date.now() - lastFocusedAt < PRESENCE_TTL_MS });
 }
 
+function threadExists(sessionId: string): boolean {
+  return groupRunsBySession(listRuns()).has(sessionId) || runningSessionIds().includes(sessionId);
+}
+
 async function archiveThread(req: ThreadRequest, archived: boolean): Promise<Response> {
   const { sessionId } = req.params;
-  if (archived && !groupRunsBySession(listRuns()).has(sessionId)) return notFound('Thread not found');
+  if (archived && !threadExists(sessionId)) return notFound('Thread not found');
   await setArchived(sessionId, archived);
   broadcast();
   return Response.json({ ok: true });
@@ -323,8 +385,8 @@ async function focusConductor(): Promise<Response> {
 
 function threadPromptResponse(req: ThreadRequest): Response {
   const runs = groupRunsBySession(listRuns()).get(req.params.sessionId);
-  if (runs === undefined) return notFound('Thread not found');
-  return Response.json({ text: threadPrompt(runs) });
+  if (runs === undefined && !threadExists(req.params.sessionId)) return notFound('Thread not found');
+  return Response.json({ text: threadPrompt(runs ?? []) });
 }
 
 function send(client: Client, chunk: string): void {
@@ -368,11 +430,15 @@ function openEventStream(req: Request, timeout: (req: Request, seconds: number) 
 
 let refreshing = false;
 
+function runningSessionIds(): string[] {
+  return [...readSteps()].filter(([, file]) => file.current !== null).map(([sessionId]) => sessionId);
+}
+
 async function refreshLive(): Promise<void> {
   if (refreshing) return;
   refreshing = true;
   try {
-    const next = await computeLiveInfo(listRuns());
+    const next = await computeLiveInfo(listRuns(), runningSessionIds());
     const changed = JSON.stringify([...next]) !== JSON.stringify([...liveStates]);
     liveStates = next;
     if (changed) broadcast();
@@ -413,6 +479,9 @@ const server = Bun.serve({
     '/api/events': { GET: (req, srv) => openEventStream(req, (r, s) => srv.timeout(r, s)) },
     '/api/runs/:runId/todos/:todoId/answer': { POST: (req: TodoRequest) => answerTodo(req) },
     '/api/runs/:runId/todos/:todoId/dismiss': { POST: (req: TodoRequest) => dismissTodo(req) },
+    '/api/runs/:runId/todos/:todoId/understood': { POST: (req: TodoRequest) => settleFinding(req, 'understood') },
+    '/api/runs/:runId/todos/:todoId/drop': { POST: (req: TodoRequest) => settleFinding(req, 'dropped') },
+    '/api/runs/:runId/todos/:todoId/comment': { POST: (req: TodoRequest) => commentOnFinding(req) },
     '/api/runs/:runId/todos/:todoId/reopen': { POST: (req: TodoRequest) => reopenTodo(req) },
     '/avatars/:file': { GET: (req: Request & { params: { file: string } }) => serveAvatar(req) },
     '/api/runs/:runId/todos/:todoId/ask': { POST: (req: TodoRequest) => askTodo(req) },

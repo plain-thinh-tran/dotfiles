@@ -14,8 +14,9 @@ import {
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { councilAgrees } from './council';
+import { isRunMode, modeOf } from './mode';
 import { isReadyToSubmit } from './prompt';
-import type { Agent, LiveState, Position, Run, Session, Thread, Todo, TodoCategory } from './types';
+import type { Agent, LiveState, Position, Run, RunMode, RunPr, Session, Thread, Todo, TodoCategory } from './types';
 
 const SAFE_ID = /^[A-Za-z0-9._-]+$/;
 const PRUNE_AFTER_MS = 14 * 24 * 60 * 60 * 1000;
@@ -33,6 +34,9 @@ export type ConductorNames = {
   prTitle: string;
   branch: string;
   title: string;
+  workspacePath: string;
+  directoryName: string;
+  repoName: string;
 };
 
 export type LiveInfo = { state: LiveState; names: ConductorNames | null; activityAt: string | null };
@@ -42,6 +46,8 @@ export type PushInput = {
   skill: string;
   title: string;
   summary?: string;
+  mode?: RunMode;
+  pr?: RunPr;
   session?: Partial<Session>;
   agents?: Agent[];
   todos?: TodoInput[];
@@ -246,6 +252,32 @@ async function changeTodo(runId: string, todoId: string, change: (todo: Todo, at
   return found;
 }
 
+type Message = NonNullable<Todo['conversation']>[number];
+
+export function patchLatestThinh(todo: Todo, patch: Partial<Message>): void {
+  const conversation = todo.conversation ?? [];
+  const index = conversation.map((message) => message.from).lastIndexOf('thinh');
+  if (index === -1) return;
+  todo.conversation = conversation.map((message, i) => (i === index ? { ...message, ...patch } : message));
+}
+
+export function withoutSubmission(todo: Todo): void {
+  const conversation = todo.conversation ?? [];
+  const index = conversation.map((message) => message.from).lastIndexOf('thinh');
+  const message = conversation[index];
+  if (message === undefined) return;
+  const rest = { ...message };
+  delete rest.submittedAt;
+  todo.conversation = conversation.map((candidate, i) => (i === index ? rest : candidate));
+}
+
+export async function markFallbackFailed(runId: string, todoId: string, text: string): Promise<boolean> {
+  return await changeTodo(runId, todoId, (todo) => {
+    const latest = [...(todo.conversation ?? [])].reverse().find((message) => message.from === 'thinh');
+    if (latest?.pending === true && latest.text === text) patchLatestThinh(todo, { fallbackFailed: true });
+  });
+}
+
 export async function addQuestion(runId: string, todoId: string, text: string): Promise<boolean> {
   return await changeTodo(runId, todoId, (todo, at) => {
     todo.conversation = [...(todo.conversation ?? []), { from: 'thinh', text, at, pending: true }];
@@ -317,6 +349,11 @@ function parseTodoInput(raw: unknown, index: number): TodoInput {
   return raw as TodoInput;
 }
 
+function parsePr(raw: unknown): RunPr | undefined {
+  if (!isRecord(raw) || typeof raw.number !== 'number' || typeof raw.url !== 'string') return undefined;
+  return { number: raw.number, url: raw.url, author: typeof raw.author === 'string' ? raw.author : '' };
+}
+
 export function parsePushInput(raw: unknown): PushInput {
   if (!isRecord(raw)) throw new Error('Input must be a JSON object');
   const runId = requireString(raw, 'runId', 'input');
@@ -326,6 +363,8 @@ export function parsePushInput(raw: unknown): PushInput {
     skill: requireString(raw, 'skill', 'input'),
     title: requireString(raw, 'title', 'input'),
     summary: typeof raw.summary === 'string' && raw.summary.trim() !== '' ? raw.summary.trim() : undefined,
+    mode: isRunMode(raw.mode) ? raw.mode : undefined,
+    pr: parsePr(raw.pr),
     session: isRecord(raw.session) ? (raw.session as Partial<Session>) : undefined,
     agents: Array.isArray(raw.agents) ? raw.agents.map(parseAgent) : undefined,
     todos: Array.isArray(raw.todos) ? raw.todos.map(parseTodoInput) : undefined,
@@ -362,6 +401,7 @@ function normalizeTodo(todo: Todo): Todo {
     evidence: toList(todo.evidence).map((item) => (typeof item === 'string' ? { ref: item } : item)) as Todo['evidence'],
     links: toList(todo.links) as Todo['links'],
     ...(todo.diffs !== undefined ? { diffs: toList(todo.diffs) as NonNullable<Todo['diffs']> } : {}),
+    ...(todo.suggestedQuestions !== undefined ? { suggestedQuestions: toStrings(todo.suggestedQuestions) } : {}),
     ...(todo.conversation !== undefined ? { conversation: toList(todo.conversation) as NonNullable<Todo['conversation']> } : {}),
   };
 }
@@ -377,8 +417,9 @@ function presetAnswer(input: TodoInput, category: TodoCategory, now: string): To
 }
 
 function toTodo(input: TodoInput, existing: Todo | undefined, now: string): Todo {
-  const category = categoryOf(input);
-  const preset = existing === undefined ? presetAnswer(input, category, now) : null;
+  const finding = input.kind === 'finding';
+  const category = finding ? 'needs-you' : categoryOf(input);
+  const preset = existing === undefined && !finding ? presetAnswer(input, category, now) : null;
   const staleCouncilPick =
     existing !== undefined && existing.state === 'answered' && existing.answer?.preset === true && category !== 'key-decision';
   return {
@@ -387,13 +428,17 @@ function toTodo(input: TodoInput, existing: Todo | undefined, now: string): Todo
     category,
     title: input.title,
     question: input.question ?? '',
-    recommendation: input.recommendation ?? null,
-    options: input.options ?? [],
+    recommendation: finding ? null : (input.recommendation ?? null),
+    options: finding ? [] : (input.options ?? []),
     positions: (toList(input.positions) as Position[]).map(normalizePosition),
     tradeoffs: input.tradeoffs ?? [],
     caveats: input.caveats ?? [],
     evidence: input.evidence ?? [],
     diffs: input.diffs ?? [],
+    ...(input.severity !== undefined ? { severity: input.severity } : {}),
+    ...(input.verification !== undefined ? { verification: input.verification } : {}),
+    ...(input.draftComment !== undefined ? { draftComment: input.draftComment } : {}),
+    ...(input.suggestedQuestions !== undefined ? { suggestedQuestions: input.suggestedQuestions } : {}),
     links: input.links ?? [],
     state: staleCouncilPick ? 'open' : (existing?.state ?? (preset === null ? 'open' : 'answered')),
     answer: staleCouncilPick ? null : (existing?.answer ?? preset),
@@ -403,6 +448,12 @@ function toTodo(input: TodoInput, existing: Todo | undefined, now: string): Todo
     doneAt: existing?.doneAt,
     conversation: existing?.conversation,
   };
+}
+
+function modeFields(input: PushInput, existing: Run | null): Pick<Run, 'mode' | 'pr'> {
+  const mode = input.mode ?? existing?.mode;
+  const pr = input.pr ?? existing?.pr;
+  return { ...(mode !== undefined ? { mode } : {}), ...(pr !== undefined ? { pr } : {}) };
 }
 
 export function mergeRun(existing: Run | null, input: PushInput, fallbackSession: Session): Run {
@@ -418,6 +469,7 @@ export function mergeRun(existing: Run | null, input: PushInput, fallbackSession
     skill: input.skill,
     title: input.title,
     summary: input.summary ?? existing?.summary ?? '',
+    ...modeFields(input, existing),
     status: pushed.length > 0 ? 'active' : (existing?.status ?? 'active'),
     createdAt: existing?.createdAt ?? now,
     updatedAt: now,
@@ -503,6 +555,8 @@ function toThread(
     displayName: displayNameOf(names, latest.session.workspaceName),
     description: descriptionOf(names, runs),
     summary: summaryOf(runs),
+    mode: modeOf(latest),
+    pr: latest.pr ?? null,
     live: liveFor(info?.state ?? 'dead', runs),
     step: steps?.current ?? null,
     steps: steps?.history ?? [],
@@ -511,6 +565,58 @@ function toThread(
     openCount: countTodos(runs, (todo) => todo.state === 'open'),
     answeredCount: countTodos(runs, isReadyToSubmit),
     updatedAt: latestActivity([latest.updatedAt, steps?.current?.at, steps?.history[steps.history.length - 1]?.at, info?.activityAt]),
+  };
+}
+
+function agentFromId(id: string): Agent {
+  const name = id.charAt(0).toUpperCase() + id.slice(1);
+  if (id === 'opus' || id === 'claude') return { id, name, role: 'orchestrator', harness: 'claude', model: 'opus' };
+  if (id === 'sonnet') return { id, name, role: 'worker', harness: 'claude', model: 'sonnet' };
+  if (id === 'haiku') return { id, name, role: 'scout', harness: 'claude', model: 'haiku' };
+  if (id === 'codex') return { id, name, role: 'council', harness: 'codex', model: 'codex' };
+  if (id === 'grok') return { id, name, role: 'council', harness: 'cursor', model: 'grok' };
+  return { id, name, role: 'council', harness: 'other', model: '' };
+}
+
+function agentsFromSteps(history: StepEntry[]): Agent[] {
+  const ids = [...new Set(history.map((step) => step.agent ?? 'opus'))];
+  return ids.map(agentFromId);
+}
+
+function toStepsOnlyThread(
+  sessionId: string,
+  info: LiveInfo | undefined,
+  archived: boolean,
+  steps: StepsFile,
+  instantAsk: boolean,
+): Thread {
+  const names = info?.names ?? null;
+  const session: Session = {
+    conductorSessionId: sessionId,
+    workspacePath: names?.workspacePath ?? '',
+    workspaceName: names?.directoryName !== undefined && names.directoryName !== '' ? names.directoryName : sessionId,
+    repo: names?.repoName ?? '',
+    branch: names?.branch ?? '',
+    pr: null,
+  };
+  return {
+    sessionId,
+    archived,
+    instantAsk,
+    session,
+    displayName: displayNameOf(names, session.workspaceName),
+    description: names?.title ?? '',
+    summary: '',
+    mode: 'build',
+    pr: null,
+    live: liveFor(info?.state ?? 'dead', []),
+    step: steps.current,
+    steps: steps.history,
+    agents: agentsFromSteps(steps.history),
+    runs: [],
+    openCount: 0,
+    answeredCount: 0,
+    updatedAt: latestActivity([steps.current?.at, steps.history[steps.history.length - 1]?.at, info?.activityAt]),
   };
 }
 
@@ -537,11 +643,18 @@ export function buildThreads(
   steps: ReadonlyMap<string, StepsFile>,
   modPolls: ReadonlyMap<string, number>,
 ): Thread[] {
-  const threads = [...groupRunsBySession(runs)]
+  const groups = groupRunsBySession(runs);
+  const withRuns = [...groups]
     .filter(([sessionId]) => showArchived || !archived.has(sessionId))
     .map(([sessionId, group]) =>
       toThread(sessionId, group, live.get(sessionId), archived.has(sessionId), steps.get(sessionId), recentlyPolled(modPolls.get(sessionId), Date.now())),
     );
+  const stepsOnly = [...steps]
+    .filter(([sessionId, file]) => file.current !== null && !groups.has(sessionId) && (showArchived || !archived.has(sessionId)))
+    .map(([sessionId, file]) =>
+      toStepsOnlyThread(sessionId, live.get(sessionId), archived.has(sessionId), file, recentlyPolled(modPolls.get(sessionId), Date.now())),
+    );
+  const threads = [...withRuns, ...stepsOnly];
   return threads.sort(
     (a, b) =>
       Number(a.archived) - Number(b.archived) ||

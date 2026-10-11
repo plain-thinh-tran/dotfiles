@@ -4,9 +4,11 @@ import { isAwaitingPickup, isReadyToSubmit } from '../src/prompt';
 import type { LiveState, Run, Thread, Todo } from '../src/types';
 import type { Tab } from './App';
 import { Avatar } from './Avatar';
+import { ModeTag } from './ModeTag';
 import { prefersReducedMotion } from './motion';
 
 type Slice = 'you' | 'council' | 'deferred' | 'dismissed' | 'open';
+type FindingSlice = 'review' | 'understood' | 'queued' | 'commented' | 'dropped';
 
 const LIVE_TEXT: Record<LiveState, string> = {
   working: 'Working',
@@ -22,6 +24,14 @@ const SLICES: { id: Slice; label: string; color: string }[] = [
   { id: 'deferred', label: 'Deferred', color: 'var(--dim)' },
   { id: 'dismissed', label: 'Dismissed', color: 'var(--faint)' },
   { id: 'open', label: 'Still open', color: 'var(--amber)' },
+];
+
+const FINDING_SLICES: { id: FindingSlice; label: string; color: string }[] = [
+  { id: 'review', label: 'To review', color: 'var(--amber)' },
+  { id: 'understood', label: 'Understood', color: 'var(--green)' },
+  { id: 'queued', label: 'Comments queued', color: 'var(--blue)' },
+  { id: 'commented', label: 'Commented', color: 'var(--violet)' },
+  { id: 'dropped', label: 'Dropped', color: 'var(--faint)' },
 ];
 
 const MINUTE_MS = 60 * 1000;
@@ -65,7 +75,7 @@ function hasCouncilView(todo: Todo): boolean {
 function averageDecisionTime(runs: Run[]): number | null {
   const times = runs.flatMap((run) =>
     run.todos
-      .filter((todo) => todo.answer !== null && todo.answer.preset !== true)
+      .filter((todo) => todo.kind !== 'finding' && todo.answer !== null && todo.answer.preset !== true)
       .map((todo) => new Date((todo.answer as NonNullable<Todo['answer']>).answeredAt).getTime() - new Date(run.createdAt).getTime()),
   );
   if (times.length === 0) return null;
@@ -73,6 +83,7 @@ function averageDecisionTime(runs: Run[]): number | null {
 }
 
 const COUNT_UP_MS = 400;
+const MAX_HISTORY = 8;
 
 function useCountUp(target: number): number {
   const [shown, setShown] = useState(() => (prefersReducedMotion() ? target : 0));
@@ -116,26 +127,26 @@ function isToday(iso: string | undefined): boolean {
   return iso !== undefined && new Date(iso).toDateString() === new Date().toDateString();
 }
 
-function DecisionSplit({ todos }: { todos: Todo[] }) {
-  const counts = new Map<Slice, number>();
-  todos.forEach((todo) => {
-    const slice = sliceOf(todo);
-    if (slice !== null) counts.set(slice, (counts.get(slice) ?? 0) + 1);
-  });
-  const total = [...counts.values()].reduce((sum, n) => sum + n, 0);
+function SplitBar<S extends string>(props: {
+  slices: { id: S; label: string; color: string }[];
+  counts: Map<S, number>;
+  label: string;
+  hideWhenZero: S[];
+}) {
+  const total = [...props.counts.values()].reduce((sum, n) => sum + n, 0);
   return (
     <>
-      <div className="split-bar" role="img" aria-label="Decisions split">
-        {SLICES.map((slice) => {
-          const n = counts.get(slice.id) ?? 0;
+      <div className="split-bar" role="img" aria-label={props.label}>
+        {props.slices.map((slice) => {
+          const n = props.counts.get(slice.id) ?? 0;
           return n > 0 ? <span key={slice.id} style={{ flex: n, background: slice.color }} title={`${slice.label} · ${n}`} /> : null;
         })}
         {total === 0 ? <span style={{ flex: 1 }} /> : null}
       </div>
       <div className="split-legend">
-        {SLICES.map((slice) => {
-          const n = counts.get(slice.id) ?? 0;
-          if (n === 0 && (slice.id === 'deferred' || slice.id === 'dismissed')) return null;
+        {props.slices.map((slice) => {
+          const n = props.counts.get(slice.id) ?? 0;
+          if (n === 0 && props.hideWhenZero.includes(slice.id)) return null;
           return (
             <span key={slice.id} className="legend-item" data-zero={n === 0}>
               <i style={{ background: slice.color }} />
@@ -148,10 +159,30 @@ function DecisionSplit({ todos }: { todos: Todo[] }) {
   );
 }
 
+function tally<S extends string>(todos: Todo[], sliceOf: (todo: Todo) => S | null): Map<S, number> {
+  const counts = new Map<S, number>();
+  todos.forEach((todo) => {
+    const slice = sliceOf(todo);
+    if (slice !== null) counts.set(slice, (counts.get(slice) ?? 0) + 1);
+  });
+  return counts;
+}
+
+function findingSliceOf(todo: Todo): FindingSlice | null {
+  if (todo.state === 'open') return 'review';
+  if (todo.state === 'understood') return 'understood';
+  if (todo.state === 'answered' || todo.state === 'submitted' || todo.state === 'picked_up') return 'queued';
+  if (todo.state === 'commented') return 'commented';
+  if (todo.state === 'dropped') return 'dropped';
+  return null;
+}
+
 function blockKind(todo: Todo): string {
   if (todo.state === 'open') return 'open';
   if (todo.state === 'answered') return todo.answer?.preset === true ? 'council' : 'answered';
   if (todo.state === 'submitted' || todo.state === 'picked_up') return 'sent';
+  if (todo.state === 'understood' || todo.state === 'commented') return 'done';
+  if (todo.state === 'dropped') return 'dismissed';
   return todo.state;
 }
 
@@ -211,18 +242,14 @@ function RunRow({ run, now, onOpenTodo }: { run: Run; now: number; onOpenTodo: (
   );
 }
 
-export function Overview(props: { thread: Thread; now: number; onTab: (tab: Tab) => void; onOpenTodo: (key: string) => void }) {
-  const { thread, now, onTab } = props;
-  const todos = thread.runs.flatMap((run) => run.todos);
-  const count = (state: Todo['state']) => todos.filter((todo) => todo.state === state).length;
-  const councilViews = todos.filter(hasCouncilView);
-  const average = averageDecisionTime(thread.runs);
+function OverviewHeader({ thread, now }: { thread: Thread; now: number }) {
   return (
-    <div className="detail-scroll">
-      <div className="overview">
-        <header className="overview-head">
+      <header className="overview-head">
           <div>
-            <h2>{thread.displayName}</h2>
+            <div className="title-row">
+              <h2>{thread.displayName}</h2>
+              <ModeTag mode={thread.mode} pr={thread.pr} />
+            </div>
             <p className="muted">{thread.description}</p>
             {thread.summary !== '' ? <p className="overview-summary">{thread.summary}</p> : null}
           </div>
@@ -232,28 +259,13 @@ export function Overview(props: { thread: Thread; now: number; onTab: (tab: Tab)
             <span className="muted">· updated {relativeTime(thread.updatedAt, now)}</span>
             {thread.live === 'working' && thread.step !== null ? <span className="muted overview-step">· Now: {thread.step.text}</span> : null}
           </div>
-        </header>
-        <section className="tiles">
-          <Tile label="Needs you" count={count('open')} onClick={() => onTab('open')} />
-          <Tile label="Ready to submit" count={todos.filter(isReadyToSubmit).length} onClick={() => onTab('open')} />
-          <Tile label="Waiting for agent" count={todos.filter(isAwaitingPickup).length} onClick={() => onTab('progress')} />
-          <Tile label="Agent working on it" count={count('picked_up')} onClick={() => onTab('progress')} />
-          <Tile label="Done" count={count('done')} today={todos.filter((todo) => isToday(todo.doneAt)).length} onClick={() => onTab('all')} />
-          <Tile label="Council picks" count={todos.filter((todo) => todo.category === 'key-decision').length} onClick={() => onTab('all')} />
-        </section>
-        <section>
-          <h3>Decisions</h3>
-          <DecisionSplit todos={todos} />
-          <div className="split-facts">
-            {councilViews.length > 0 ? (
-              <span>
-                Council agreed on {councilViews.filter(isUnanimous).length} of {councilViews.length} decisions
-              </span>
-            ) : null}
-            {average !== null ? <span>Avg time to decide: {formatDuration(average)}</span> : null}
-          </div>
-        </section>
-        <section>
+      </header>
+  );
+}
+
+function AgentsSection({ thread }: { thread: Thread }) {
+  return (
+      <section>
           <div className="section-title">
             <h3>Agents</h3>
             {thread.live === 'working' ? <span className="pill-working">Working now</span> : null}
@@ -266,7 +278,107 @@ export function Overview(props: { thread: Thread; now: number; onTab: (tab: Tab)
               </div>
             ))}
           </div>
+      </section>
+  );
+}
+
+function RunningOverview({ thread, now }: { thread: Thread; now: number }) {
+  const history = [...thread.steps].reverse().slice(0, MAX_HISTORY);
+  const orchestrator = thread.agents.find((agent) => agent.role === 'orchestrator');
+  return (
+    <div className="detail-scroll">
+      <div className="overview">
+        <OverviewHeader thread={thread} now={now} />
+        <section className="running">
+          {thread.step !== null ? <div className="running-now">Now: {thread.step.text}</div> : null}
+          <p className="muted">No decisions yet. They will appear here when the agents need you.</p>
         </section>
+        <AgentsSection thread={thread} />
+        {history.length > 0 ? (
+          <section>
+            <h3>Recent steps</h3>
+            <div className="step-list">
+              {history.map((step) => {
+                const agent = thread.agents.find((candidate) => candidate.id === (step.agent ?? orchestrator?.id));
+                return (
+                  <div key={`${step.at}-${step.text}`} className="step-line">
+                    {agent !== undefined ? <Avatar agent={agent} size={20} /> : null}
+                    <span className="step-text">{step.text}</span>
+                    <span className="step-time">{relativeTime(step.at, now)}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+export function Overview(props: { thread: Thread; now: number; onTab: (tab: Tab) => void; onOpenTodo: (key: string) => void }) {
+  const { thread, now, onTab } = props;
+  if (thread.runs.length === 0) return <RunningOverview thread={thread} now={now} />;
+  const todos = thread.runs.flatMap((run) => run.todos);
+  const findings = todos.filter((todo) => todo.kind === 'finding');
+  const decisions = todos.filter((todo) => todo.kind !== 'finding');
+  const count = (state: Todo['state']) => decisions.filter((todo) => todo.state === state).length;
+  const findingCount = (matches: (todo: Todo) => boolean) => findings.filter(matches).length;
+  const councilViews = decisions.filter(hasCouncilView);
+  const average = averageDecisionTime(thread.runs);
+  return (
+    <div className="detail-scroll">
+      <div className="overview">
+        <OverviewHeader thread={thread} now={now} />
+        {decisions.length > 0 ? (
+          <section className="tiles">
+            <Tile label="Needs you" count={count('open')} onClick={() => onTab('open')} />
+            <Tile label="Ready to submit" count={decisions.filter(isReadyToSubmit).length} onClick={() => onTab('open')} />
+            <Tile label="Waiting for agent" count={decisions.filter(isAwaitingPickup).length} onClick={() => onTab('progress')} />
+            <Tile label="Agent working on it" count={count('picked_up')} onClick={() => onTab('progress')} />
+            <Tile
+              label="Done"
+              count={count('done')}
+              today={decisions.filter((todo) => todo.state === 'done' && isToday(todo.doneAt)).length}
+              onClick={() => onTab('all')}
+            />
+            <Tile label="Council picks" count={decisions.filter((todo) => todo.category === 'key-decision').length} onClick={() => onTab('all')} />
+          </section>
+        ) : null}
+        {findings.length > 0 ? (
+          <section className="tiles five">
+            <Tile label="To review" count={findingCount((todo) => todo.state === 'open')} onClick={() => onTab('open')} />
+            <Tile label="Understood" count={findingCount((todo) => todo.state === 'understood')} onClick={() => onTab('all')} />
+            <Tile
+              label="Comments queued"
+              count={findingCount((todo) => findingSliceOf(todo) === 'queued')}
+              onClick={() => onTab('open')}
+            />
+            <Tile label="Commented" count={findingCount((todo) => todo.state === 'commented')} onClick={() => onTab('all')} />
+            <Tile label="Dropped" count={findingCount((todo) => todo.state === 'dropped')} onClick={() => onTab('all')} />
+          </section>
+        ) : null}
+        {decisions.length > 0 ? (
+          <section>
+            <h3>Decisions</h3>
+            <SplitBar slices={SLICES} counts={tally(decisions, sliceOf)} label="Decisions split" hideWhenZero={['deferred', 'dismissed']} />
+            <div className="split-facts">
+              {councilViews.length > 0 ? (
+                <span>
+                  Council agreed on {councilViews.filter(isUnanimous).length} of {councilViews.length} decisions
+                </span>
+              ) : null}
+              {average !== null ? <span>Avg time to decide: {formatDuration(average)}</span> : null}
+            </div>
+          </section>
+        ) : null}
+        {findings.length > 0 ? (
+          <section>
+            <h3>Findings</h3>
+            <SplitBar slices={FINDING_SLICES} counts={tally(findings, findingSliceOf)} label="Findings split" hideWhenZero={[]} />
+          </section>
+        ) : null}
+        <AgentsSection thread={thread} />
         <section>
           <div className="section-title">
             <h3>Runs</h3>

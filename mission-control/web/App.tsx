@@ -1,14 +1,24 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
 import { isSplit } from '../src/council';
-import { chosenLabel, isAwaitingPickup, isReadyToSubmit, optionsFor } from '../src/prompt';
-import type { Agent, LiveState, Option, Run, Thread, Todo, TodoState } from '../src/types';
+import {
+  QUESTION_PATIENCE_MS,
+  chosenLabel,
+  deliverableQuestionCount,
+  isAwaitingPickup,
+  isReadyToSubmit,
+  latestThinhMessage,
+  optionsFor,
+} from '../src/prompt';
+import type { Agent, LiveState, Option, Run, RunMode, RunPr, Thread, Todo, TodoState } from '../src/types';
 import { Avatar, AvatarStack } from './Avatar';
 import { unseenCount, useNewTodos, usePresence } from './activity';
 import { Conversation } from './Conversation';
 import { Diff } from './Diff';
+import { FindingPane } from './Finding';
 import { History } from './History';
 import { prefersReducedMotion, useTypewriter } from './motion';
+import { ModeIcon, MODE_TITLE, ModeTag } from './ModeTag';
 import { Overview } from './Overview';
 import { Palette } from './Palette';
 import type { PaletteItem } from './Palette';
@@ -36,6 +46,23 @@ const SECTION_LABEL: Record<Tab, string> = {
   all: 'All',
 };
 
+const OPEN_LABEL: Record<RunMode, string> = {
+  build: 'Needs you',
+  review: 'To review',
+  'self-check': 'To fix',
+};
+
+function sectionLabel(mode: RunMode, tab: Tab, finding: boolean): string {
+  if (tab === 'open') return finding && mode === 'build' ? 'To review' : OPEN_LABEL[mode];
+  return finding ? FINDING_LABEL[tab] : SECTION_LABEL[tab];
+}
+
+const FINDING_LABEL: Record<Tab, string> = {
+  open: 'To review',
+  progress: 'In progress',
+  all: 'Findings',
+};
+
 const STATE_LABEL: Record<TodoState, string> = {
   open: 'Open',
   answered: 'Answered',
@@ -43,6 +70,9 @@ const STATE_LABEL: Record<TodoState, string> = {
   picked_up: 'Picked up',
   done: 'Done',
   dismissed: 'Dismissed',
+  understood: 'Understood',
+  commented: 'Commented',
+  dropped: 'Dropped',
 };
 
 const LIVE_LABEL: Record<LiveState, string> = {
@@ -54,7 +84,17 @@ const LIVE_LABEL: Record<LiveState, string> = {
 };
 
 const LIFECYCLE_STAGES = ['Open', 'Answered', 'Sent', 'Picked up', 'Done'];
-const LIFECYCLE_INDEX: Record<TodoState, number> = { open: 0, answered: 1, submitted: 2, picked_up: 3, done: 4, dismissed: -1 };
+const LIFECYCLE_INDEX: Record<TodoState, number> = {
+  open: 0,
+  answered: 1,
+  submitted: 2,
+  picked_up: 3,
+  done: 4,
+  dismissed: -1,
+  understood: -1,
+  commented: 4,
+  dropped: -1,
+};
 const CONFIRM_MS = 2500;
 const SNACK_MS = 5000;
 const LEAVE_MS = 250;
@@ -116,6 +156,22 @@ function isNeedsYou(entry: Entry): boolean {
   return entry.todo.category === 'needs-you';
 }
 
+function plural(n: number, word: string): string {
+  return `${n} ${word}${n === 1 ? '' : 's'}`;
+}
+
+function submitLabel(answers: number, questions: number): string {
+  if (answers === 0 && questions === 0) return 'Nothing to submit';
+  if (answers === 0) return `Send ${plural(questions, 'question')}`;
+  if (questions === 0) return `Submit ${answers}`;
+  return `Submit ${answers} + ${plural(questions, 'question')}`;
+}
+
+function sentSummary(answers: number, questions: number): string {
+  const parts = [answers > 0 ? plural(answers, 'answer') : null, questions > 0 ? plural(questions, 'question') : null];
+  return parts.filter((part): part is string => part !== null).join(' and ');
+}
+
 function tabOf(todo: Todo): Tab {
   if (todo.state === 'open' || isReadyToSubmit(todo)) return 'open';
   if (isAwaitingPickup(todo) || todo.state === 'picked_up') return 'progress';
@@ -159,6 +215,7 @@ function useCouncilOpen(sessionId: string): [boolean, () => void] {
 }
 
 function initialDraft(todo: Todo): Draft {
+  if (todo.kind === 'finding') return { optionId: null, text: todo.answer?.text ?? todo.draftComment ?? '' };
   return { optionId: todo.answer?.optionId ?? null, text: todo.answer?.text ?? '' };
 }
 
@@ -278,6 +335,29 @@ function StateIcon({ state }: { state: TodoState }) {
           <path d="M5 8.2 L7.1 10.3 L11 6" stroke="#0b0b0d" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
       );
+    case 'understood':
+      return (
+        <svg {...common}>
+          <title>{STATE_LABEL[state]}</title>
+          <circle cx="8" cy="8" r="6" stroke="#3fb950" strokeWidth="1.5" />
+          <path d="M5.3 8.2 L7.2 10 L10.8 6.2" stroke="#3fb950" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      );
+    case 'commented':
+      return (
+        <svg {...common}>
+          <title>{STATE_LABEL[state]}</title>
+          <path d="M2.5 3.5 H13.5 V10.5 H8.5 L5.5 13 V10.5 H2.5 Z" fill="#3fb950" stroke="#3fb950" strokeWidth="1.2" strokeLinejoin="round" />
+        </svg>
+      );
+    case 'dropped':
+      return (
+        <svg {...common}>
+          <title>{STATE_LABEL[state]}</title>
+          <circle cx="8" cy="8" r="6" stroke="#5c5c66" strokeWidth="1.5" />
+          <path d="M5.8 5.8 L10.2 10.2 M10.2 5.8 L5.8 10.2" stroke="#5c5c66" strokeWidth="1.5" strokeLinecap="round" />
+        </svg>
+      );
     case 'dismissed':
       return (
         <svg {...common}>
@@ -376,6 +456,7 @@ function CouncilIcon({ title }: { title?: string }) {
 function answerExcerpt(todo: Todo): string | null {
   const answer = todo.answer;
   if (answer === null || todo.state !== 'answered') return null;
+  if (answer.comment === true) return 'Comment queued';
   if (answer.deferred) return 'Deferred';
   if (answer.optionId !== null) return optionsFor(todo).find((o) => o.id === answer.optionId)?.label ?? answer.optionId;
   const note = answer.text.trim().split('\n')[0] ?? '';
@@ -430,6 +511,9 @@ function ThreadRow(props: { thread: Thread; selected: boolean; unseen: number; f
       >
         <div className="thread-top">
           <LiveMark state={thread.live} />
+          <span className="thread-mode" data-mode={thread.mode} title={MODE_TITLE[thread.mode]}>
+            <ModeIcon mode={thread.mode} />
+          </span>
           <span className="thread-name">{thread.displayName}</span>
           {props.unseen > 0 ? <span className="newpill">{props.unseen} new</span> : null}
           {thread.answeredCount > 0 ? <span className="badge badge-ready">{thread.answeredCount} ready</span> : null}
@@ -550,6 +634,7 @@ type TodosPaneProps = {
   onTab: (tab: Tab) => void;
   onSelect: (key: string) => void;
   confirming: boolean;
+  questions: number;
   onSubmit: () => void;
   onCopyPrompt: () => void;
 };
@@ -558,12 +643,14 @@ function TodosPane(props: TodosPaneProps) {
   const { thread, tab, entries } = props;
   const dead = thread.live === 'dead';
   const count = thread.answeredCount;
+  const total = count + props.questions;
   const shown = entries.map((entry) => ({ entry, leaving: false }));
   [...props.ghosts]
     .sort((a, b) => a.index - b.index)
     .forEach((ghost) => shown.splice(Math.min(ghost.index, shown.length), 0, { entry: ghost.entry, leaving: true }));
-  const needs = shown.filter((row) => isNeedsYou(row.entry));
-  const council = shown.filter((row) => !isNeedsYou(row.entry));
+  const reviewing = shown.filter((row) => row.entry.todo.kind === 'finding');
+  const needs = shown.filter((row) => row.entry.todo.kind !== 'finding' && isNeedsYou(row.entry));
+  const council = shown.filter((row) => row.entry.todo.kind !== 'finding' && !isNeedsYou(row.entry));
   const showRun = thread.runs.filter((r) => r.status === 'active').length > 1;
   return (
     <aside className="pane todos">
@@ -584,13 +671,30 @@ function TodosPane(props: TodosPaneProps) {
               <circle cx="24" cy="24" r="20" />
             </svg>
             <div className="caught-up-title">All caught up</div>
-            <div className="caught-up-note">Nothing needs you in this session</div>
+            <div className="caught-up-note">
+              {thread.runs.length === 0 ? 'Agents are still working' : 'Nothing needs you in this session'}
+            </div>
           </div>
         ) : null}
         {needs.length > 0 ? (
           <section className="needs">
-            <div className="section-label">{SECTION_LABEL[tab]} · {needs.filter((row) => !row.leaving).length}</div>
+            <div className="section-label">{sectionLabel(thread.mode, tab, false)} · {needs.filter((row) => !row.leaving).length}</div>
             {needs.map(({ entry, leaving }) => (
+              <TodoRow
+                key={todoKey(entry)}
+                entry={entry}
+                selected={todoKey(entry) === props.selectedKey}
+                showRun={showRun}
+                leaving={leaving}
+                onSelect={() => props.onSelect(todoKey(entry))}
+              />
+            ))}
+          </section>
+        ) : null}
+        {reviewing.length > 0 ? (
+          <section className="needs">
+            <div className="section-label">{sectionLabel(thread.mode, tab, true)} · {reviewing.filter((row) => !row.leaving).length}</div>
+            {reviewing.map(({ entry, leaving }) => (
               <TodoRow
                 key={todoKey(entry)}
                 entry={entry}
@@ -638,8 +742,8 @@ function TodosPane(props: TodosPaneProps) {
             {props.confirming ? (
               <SubmitConfirm name={thread.displayName} />
             ) : (
-              <button className="btn btn-primary" disabled={count === 0} onClick={props.onSubmit}>
-                {count === 0 ? 'Nothing to submit' : `Submit ${count}`}
+              <button className="btn btn-primary" disabled={total === 0} onClick={props.onSubmit}>
+                {submitLabel(count, props.questions)}
               </button>
             )}
             <button className="link" onClick={props.onCopyPrompt}>
@@ -788,6 +892,8 @@ function AnswerSummary({ todo }: { todo: Todo }) {
 }
 
 type DetailProps = {
+  mode: RunMode;
+  pr: RunPr | null;
   instantAsk: boolean;
   busy: Busy | null;
   entry: Entry;
@@ -895,6 +1001,7 @@ function DetailPane(props: DetailProps) {
           <span className="detail-id mono">{todo.id}</span>
           <div className="detail-title">
             <h2>{todo.title}</h2>
+            <ModeTag mode={props.mode} pr={props.pr} />
             {todo.answer?.preset === true ? <CouncilIcon title={COUNCIL_TOOLTIP} /> : null}
           </div>
           <div className="detail-sub">
@@ -997,6 +1104,18 @@ export function App() {
 
   const thread = threads.find((t) => t.sessionId === sessionId) ?? threads[0] ?? null;
   const flashing = useNewTodos(threads, thread?.sessionId ?? null);
+  const [, setClock] = useState(0);
+  const questionCount = thread === null ? 0 : deliverableQuestionCount(thread.runs, Date.now());
+  useEffect(() => {
+    const waits = threads
+      .flatMap((t) => t.runs.flatMap((run) => run.todos.map(latestThinhMessage)))
+      .filter((message) => message?.pending === true && message.submittedAt === undefined && message.fallbackFailed !== true)
+      .map((message) => new Date((message as { at: string }).at).getTime() + QUESTION_PATIENCE_MS - Date.now())
+      .filter((remaining) => remaining > 0);
+    if (waits.length === 0) return;
+    const timer = setTimeout(() => setClock((tick) => tick + 1), Math.min(...waits) + 50);
+    return () => clearTimeout(timer);
+  }, [threads]);
   const [councilOpen, toggleCouncil] = useCouncilOpen(thread?.sessionId ?? '');
   const entries = thread === null ? [] : entriesOf(thread, tab);
   const navigable = councilOpen ? entries : entries.filter(isNeedsYou);
@@ -1091,10 +1210,34 @@ export function App() {
     if (ok) setDrafts((prev) => ({ ...prev, [entryKey]: { ...draft, text: '' } }));
   }
 
+  async function askFinding(text: string): Promise<void> {
+    if (entry !== null) await perform(`${todoPath(entry)}/ask`, { text });
+  }
+
+  async function reopenEntry(target: Entry): Promise<string | null> {
+    setDrafts((prev) => ({ ...prev, [todoKey(target)]: initialDraft({ ...target.todo, answer: null }) }));
+    await perform(`${todoPath(target)}/reopen`);
+    return null;
+  }
+
+  async function settleFinding(action: 'understood' | 'drop'): Promise<void> {
+    if (entry === null || busy !== null) return;
+    const target = entry;
+    if (!(await perform(`${todoPath(target)}/${action}`))) return;
+    announce(`${target.todo.id} ${action === 'drop' ? 'dropped' : 'understood'}`, () => reopenEntry(target));
+    selectNextOpen();
+  }
+
+  async function postComment(): Promise<void> {
+    if (entry === null || draft === null || busy !== null || draft.text.trim() === '') return;
+    const target = entry;
+    if (!(await perform(`${todoPath(target)}/comment`, { text: draft.text }))) return;
+    announce(`Comment queued for ${target.todo.id}`, () => reopenEntry(target));
+    selectNextOpen();
+  }
+
   async function reopen(): Promise<void> {
-    if (entry === null || entryKey === null) return;
-    setDrafts((prev) => ({ ...prev, [entryKey]: { optionId: null, text: '' } }));
-    await perform(`${todoPath(entry)}/reopen`);
+    if (entry !== null) await reopenEntry(entry);
   }
 
   async function unsubmit(sessionId: string, submissionIds: string[]): Promise<string | null> {
@@ -1113,15 +1256,19 @@ export function App() {
   }
 
   async function submit(): Promise<void> {
-    if (thread === null || thread.answeredCount === 0) return;
+    if (thread === null || thread.answeredCount + questionCount === 0) return;
     const target = thread;
     const response = await postJson(`/api/threads/${encodeURIComponent(target.sessionId)}/submit`);
     if (!response.ok) return flash('Submit failed');
-    const { submitted, submissionIds } = (await response.json()) as { submitted: number; submissionIds: string[] };
+    const { submitted, questions, submissionIds } = (await response.json()) as {
+      submitted: number;
+      questions: number;
+      submissionIds: string[];
+    };
     setConfirmingId(target.sessionId);
     if (confirmTimer.current !== undefined) clearTimeout(confirmTimer.current);
     confirmTimer.current = setTimeout(() => setConfirmingId(null), CONFIRM_MS);
-    announce(`${submitted} ${submitted === 1 ? 'answer' : 'answers'} sent to ${target.displayName}`, () =>
+    announce(`${sentSummary(submitted, questions)} sent to ${target.displayName}`, () =>
       unsubmit(target.sessionId, submissionIds),
     );
   }
@@ -1175,6 +1322,48 @@ export function App() {
     if (option !== undefined) patchDraft({ optionId: option.id });
   }
 
+  function renderMiddle(active: Thread): ReactNode {
+    if (!decisionActive) return <Overview thread={active} now={now} onTab={setTab} onOpenTodo={openTodo} />;
+    if (entry.todo.kind === 'finding') {
+      return (
+        <FindingPane
+          mode={active.mode}
+          pr={active.pr}
+          run={entry.run}
+          todo={entry.todo}
+          agents={active.agents}
+          instantAsk={active.instantAsk}
+          draft={draft.text}
+          busy={busy !== null}
+          onDraft={(text) => patchDraft({ text })}
+          onGotIt={() => void settleFinding('understood')}
+          onDrop={() => void settleFinding('drop')}
+          onPost={() => void postComment()}
+          onReopen={() => void reopen()}
+          onAsk={(text) => void askFinding(text)}
+          onCopy={(text) => void copyText(text, 'Copied')}
+        />
+      );
+    }
+    return (
+      <DetailPane
+        mode={active.mode}
+        pr={active.pr}
+        entry={entry}
+        agents={active.agents}
+        instantAsk={active.instantAsk}
+        draft={draft}
+        onDraft={patchDraft}
+        onAccept={() => void accept()}
+        onSave={() => void save()}
+        onAsk={() => void ask()}
+        onReopen={() => void reopen()}
+        onCopy={(text) => void copyText(text, 'Copied')}
+        busy={busy}
+      />
+    );
+  }
+
   function paletteItems(): PaletteItem[] {
     const editable = decisionActive && entry !== null && isEditable(entry.todo);
     const actions: PaletteItem[] = [];
@@ -1183,10 +1372,10 @@ export function App() {
     }
     if (editable) {
     }
-    if (thread !== null && thread.answeredCount > 0) {
+    if (thread !== null && thread.answeredCount + questionCount > 0) {
       actions.push({
         id: 'submit',
-        title: `Submit ${thread.answeredCount} to ${thread.displayName}`,
+        title: `${submitLabel(thread.answeredCount, questionCount)} to ${thread.displayName}`,
         subtitle: '',
         shortcut: '⌘↵',
         run: () => void submit(),
@@ -1243,7 +1432,7 @@ export function App() {
       return;
     }
     if (modified || event.altKey || isTyping(event.target)) return;
-    const editable = decisionActive && entry !== null && isEditable(entry.todo);
+    const editable = decisionActive && entry !== null && isEditable(entry.todo) && entry.todo.kind !== 'finding';
     if (event.key === 'o') setView('overview');
     else if (event.key === 'e' && thread !== null) void toggleArchive(thread);
     else if (event.key === 'j') moveTodo(1);
@@ -1297,26 +1486,10 @@ export function App() {
               disabled={entry === null}
               onClick={() => setView('decision')}
             >
-              Decision
+              {entry?.todo.kind === 'finding' ? 'Finding' : 'Decision'}
             </button>
           </nav>
-          {decisionActive ? (
-            <DetailPane
-              entry={entry}
-              agents={thread.agents}
-              instantAsk={thread.instantAsk}
-              draft={draft}
-              onDraft={patchDraft}
-              onAccept={() => void accept()}
-              onSave={() => void save()}
-              onAsk={() => void ask()}
-              onReopen={() => void reopen()}
-              onCopy={(text) => void copyText(text, 'Copied')}
-              busy={busy}
-            />
-          ) : (
-            <Overview thread={thread} now={now} onTab={setTab} onOpenTodo={openTodo} />
-          )}
+          {renderMiddle(thread)}
         </main>
       )}
       {thread !== null ? (
@@ -1332,6 +1505,7 @@ export function App() {
           onTab={setTab}
           onSelect={selectTodo}
           confirming={confirmingId === thread.sessionId}
+          questions={questionCount}
           onSubmit={() => void submit()}
           onCopyPrompt={() => void copyPrompt()}
         />

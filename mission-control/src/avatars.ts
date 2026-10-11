@@ -50,5 +50,5 @@ export function modelLabel(agent: Agent): string {
   if (version !== undefined) return variant !== undefined ? `GPT-${version} ${capitalise(variant)}` : `GPT-${version}`;
   const [, grok] = /grok-([\d.]+)/.exec(agent.model) ?? [];
   if (grok !== undefined) return `Grok ${grok}`;
-  return agent.model !== '' ? agent.model : agent.name;
+  return /\d/.test(agent.model) ? agent.model : agent.name;
 }

@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, openSync, watch } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { downloadMissingAvatars } from '../src/avatarFiles';
-import { isAwaitingPickup, threadPrompt, waitBlock } from '../src/prompt';
+import { hasUndeliveredQuestion, isAwaitingPickup, threadPrompt, waitBlock } from '../src/prompt';
 import {
   addReply,
   clearStep,
@@ -12,6 +12,7 @@ import {
   mcHome,
   mergeRun,
   parsePushInput,
+  patchLatestThinh,
   readRun,
   runsDir,
   updateRun,
@@ -139,12 +140,17 @@ function parseTimeoutMinutes(args: string[]): number {
   return minutes;
 }
 
-async function pickUpSubmitted(runId: string): Promise<{ run: Run; picked: Todo[] } | null> {
+async function pickUpSubmitted(runId: string): Promise<{ run: Run; picked: Todo[]; questions: Todo[] } | null> {
   const current = readRun(runId);
-  if (current === null || !current.todos.some(isAwaitingPickup)) return null;
+  if (current === null || !current.todos.some((todo) => isAwaitingPickup(todo) || hasUndeliveredQuestion(todo))) return null;
   const picked: Todo[] = [];
+  const questions: Todo[] = [];
   const at = new Date().toISOString();
   const run = await updateRun(runId, (target) => {
+    target.todos.filter(hasUndeliveredQuestion).forEach((todo) => {
+      questions.push(structuredClone(todo));
+      patchLatestThinh(todo, { deliveredAt: at });
+    });
     target.todos.filter(isAwaitingPickup).forEach((todo) => {
       picked.push(structuredClone(todo));
       if (todo.answer?.question === true) {
@@ -158,7 +164,7 @@ async function pickUpSubmitted(runId: string): Promise<{ run: Run; picked: Todo[
       todo.pickedUpAt = at;
     });
   });
-  return run === null ? null : { run, picked };
+  return run === null ? null : { run, picked, questions };
 }
 
 function wait(runId: string, timeoutMinutes: number): Promise<number> {
@@ -188,7 +194,7 @@ function wait(runId: string, timeoutMinutes: number): Promise<number> {
       try {
         const picked = await pickUpSubmitted(runId);
         if (picked === null) return;
-        finish(waitBlock(picked.run, picked.picked), 0);
+        finish(waitBlock(picked.run, picked.picked, picked.questions), 0);
       } finally {
         checking = false;
       }
@@ -204,7 +210,7 @@ async function resolveTodo(args: string[]): Promise<void> {
   const run = await updateRun(runId, (target) => {
     const todo = target.todos.find((t) => t.id === todoId);
     if (todo === undefined) return;
-    todo.state = 'done';
+    todo.state = todo.answer?.comment === true ? 'commented' : 'done';
     todo.doneAt = new Date().toISOString();
     todo.resolution = text.join(' ');
   });
