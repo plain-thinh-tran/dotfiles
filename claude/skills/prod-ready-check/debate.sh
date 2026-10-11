@@ -51,8 +51,9 @@ Read only: never edit files, never push, never call GitHub.
 
 Material:
 - All findings, numbered: $DEBATE/items.json (C* Claude's, X* Codex's, G* Grok's; the owner field says whose)
-- Diff: $CTX/diff.patch. PR head is git ref pr-$PR (git show pr-$PR:<path>). Base is origin/$BASE.
+- Diff: $CTX/diff.patch. PR head is git ref pr-$PR, base is origin/$BASE. Read code only with git show pr-$PR:<path> or git show origin/$BASE:<path>, never from the working tree (a different branch), and cite locations as plain path:line with no ref prefix.
 - Review lenses: $SKILL_DIR/lenses.md
+- Diffs of related PRs in other repos, if any: $CTX/external/
 $PRIOR
 $SCOPE
 
@@ -92,15 +93,17 @@ tally)
       . as $i
       | {claude: $pos.claude[$i.id], codex: $pos.codex[$i.id], grok: $pos.grok[$i.id]} as $p
       | [$p[]] as $all
+      | [[["claude", $p.claude], ["codex", $p.codex], ["grok", $p.grok]][] | select(.[1] != null and .[1].stance == "revise" and .[1].revised_fix != null) | {seat: .[0], fix: .[1].revised_fix}] as $fixes
       | . + $p + {
           status: (
             if any($all[]; . == null) then "contested"
             elif all($all[]; held) then "agreed"
             elif any($all[]; held) then "contested"
-            else "dropped" end)
+            else "dropped" end),
+          revisedFixes: $fixes
         })
   ' >"$DEBATE/tally-$ROUND.json"
-  jq -r 'group_by(.status) | .[] | "\(.[0].status): \(map(.id) | join(" "))"' "$DEBATE/tally-$ROUND.json"
+  jq -r 'group_by(.status) | .[] | "\(.[0].status): \(map(.id + (if (.revisedFixes | length) > 0 then " (fix revised by \(.revisedFixes | map(.seat) | join("+")))" else "" end)) | join(" "))"' "$DEBATE/tally-$ROUND.json"
   ;;
 
 *)

@@ -23,7 +23,7 @@ run_peer() {
   case "$peer" in
   codex)
     command -v codex >/dev/null || { echo "codex not installed" >&2; return 1; }
-    codex exec \
+    perl -e 'alarm shift; exec @ARGV' "${PEER_TIMEOUT:-900}" codex exec \
       -m "$(peer_model codex)" \
       -c "model_reasoning_effort=\"${CODEX_EFFORT:-high}\"" \
       -s read-only \
@@ -31,14 +31,14 @@ run_peer() {
       --ephemeral \
       --output-schema "$schema" \
       -o "$out" \
-      "$prompt" >"$log" 2>&1
+      "$prompt" </dev/null >"$log" 2>&1 || { echo "codex failed or timed out after ${PEER_TIMEOUT:-900}s, see $log" >&2; return 1; }
     ;;
   grok)
     local agent
     agent="$(command -v cursor-agent || echo "$HOME/.local/bin/cursor-agent")"
     [ -x "$agent" ] || { echo "cursor-agent not installed: curl https://cursor.com/install -fsS | bash" >&2; return 1; }
     [ -n "${CURSOR_API_KEY:-}" ] || { echo "CURSOR_API_KEY not set" >&2; return 1; }
-    "$agent" -p \
+    perl -e 'alarm shift; exec @ARGV' "${PEER_TIMEOUT:-900}" "$agent" -p \
       --mode ask \
       --trust \
       --model "$(peer_model grok)" \
@@ -47,7 +47,7 @@ run_peer() {
       "$prompt
 
 Your final reply must be only one JSON object matching this JSON schema, with no prose before or after it and no code fences:
-$(cat "$schema")" >"$log" 2>"${log%.log}.err"
+$(cat "$schema")" </dev/null >"$log" 2>"${log%.log}.err"
     jq -e '.is_error == false' "$log" >/dev/null || { echo "grok run failed, see $log" >&2; return 1; }
     jq -r '.result' "$log" | python3 -I -c '
 import json, sys

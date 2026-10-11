@@ -53,7 +53,7 @@ Model choices for every seat come from the benchmark in `~/.claude/skills/model-
 
 ## Mission Control
 
-At the start of each step, run `~/.claude/bin/mc step "<step, under 6 words>" --agent <seat id from mc.json>` (your own id for chair work, `codex` or `grok` while their council call runs, `sonnet` while a worker packet runs) (for example "Design meeting, round 1", "Building packet 2 of 4", "Review meeting") so the user sees what the session is doing; run `~/.claude/bin/mc step --clear` after the report.
+As soon as the run starts, push `<dir>/mc.json` with `runId`, `skill`, `title`, `summary` and `agents` and an empty `todos` list, so the session shows up in Mission Control with what it is about; push again with the decisions later. At the start of each step, run `~/.claude/bin/mc step "<step, under 6 words>" --agent <seat id from mc.json>` (your own id for chair work, `codex` or `grok` while their council call runs, `sonnet` while a worker packet runs) (for example "Design meeting, round 1", "Building packet 2 of 4", "Review meeting") so the user sees what the session is doing; run `~/.claude/bin/mc step --clear` after the report.
 
 Decisions the user owns go through Mission Control, not the chat. Write `<dir>/mc.json`:
 

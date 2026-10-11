@@ -108,12 +108,17 @@ jq --rawfile changed "$OUT_DIR/files.txt" '
   | sort_by(-(.sameFiles | length), -(.sameDirs | length))
 ' "$OUT_DIR/author-prs.json" >"$OUT_DIR/author-overlap.json"
 
+mkdir -p "$OUT_DIR/external"
 echo '[]' >"$OUT_DIR/ticket-prs.json"
+OWNER="${REPO%%/*}"
 for ticket in $TICKETS; do
-  gh pr list -R "$REPO" --state all --limit 20 --search "$ticket" \
-    --json number,title,state,mergedAt,url,author \
-    | jq --arg t "$ticket" --argjson pr "$PR" '[.[] | select(.number != $pr) | . + {ticket: $t, author: .author.login}]'
-done | jq -s 'add // [] | unique_by(.number)' >"$OUT_DIR/ticket-prs.json"
+  gh search prs "$ticket" --owner "$OWNER" --limit 30 \
+    --json number,title,state,url,author,repository \
+    | jq --arg t "$ticket" --argjson pr "$PR" --arg repo "$REPO" '
+        [.[] | select((.title | test("\\b" + $t + "\\b"; "i")))
+             | select(.repository.nameWithOwner != $repo or .number != $pr)
+             | {number, title, state, url, ticket: $t, author: .author.login, repo: .repository.nameWithOwner}]'
+done | jq -s 'add // [] | unique_by(.url)' >"$OUT_DIR/ticket-prs.json"
 
 LOCAL_REF=""
 DRIFT=""
@@ -160,7 +165,7 @@ fi
   jq -r 'map(select(.state == "OPEN")) | if length == 0 then "none" else .[] | "- #\(.number) \(.title) (base \(.baseRefName))" end' "$OUT_DIR/author-prs.json"
   echo
   echo "## PRs Sharing a Ticket"
-  jq -r 'if length == 0 then "none" else .[] | "- #\(.number) [\(.state)] \(.ticket) by \(.author): \(.title)" end' "$OUT_DIR/ticket-prs.json"
+  jq -r 'if length == 0 then "none" else .[] | "- \(.repo)#\(.number) [\(.state)] \(.ticket) by \(.author): \(.title)" end' "$OUT_DIR/ticket-prs.json"
   echo
   echo "## Base Drift on Changed Files Since Merge Base"
   if [ -z "$LOCAL_REF" ]; then

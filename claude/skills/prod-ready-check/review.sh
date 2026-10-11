@@ -24,9 +24,11 @@ Read only: never edit files, never push, never call GitHub.
 
 Material:
 - Diff: $CTX/diff.patch
-- Summary with CI, review threads, and the author's related PRs: $CTX/summary.md
-- PR head is the local git ref pr-$PR. Read files with: git show pr-$PR:<path>
+- Summary with review threads and the author's related PRs (ignore any CI status in it): $CTX/summary.md
+- PR head is the local git ref pr-$PR. Read PR files only with git show pr-$PR:<path> and base files only with git show origin/$BASE:<path>. The working tree is a different branch: never read source files from disk, and cite only code you read through git show.
+- Report every location as plain path:line with no ref prefix (not pr-$PR:path).
 - Compare against origin/$BASE. Local branches are stale.
+- Diffs of related PRs in other repos, if any: $CTX/external/
 
 Trace every changed file to what it replaces and what consumes it (callers, other stacks, readers of outputs, schemas, env vars), and compare old and new behaviour attribute by attribute. Back external facts with library or provider source in the repo's node_modules or vendor docs you already know, and say which.
 
