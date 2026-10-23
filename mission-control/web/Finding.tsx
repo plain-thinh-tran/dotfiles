@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
 import type { Agent, Run, RunMode, RunPr, Todo } from '../src/types';
+import { anchorMatchesPath, parseAnchor, prLineUrl } from './anchor';
 import { Consensus } from './Consensus';
 import { Conversation } from './Conversation';
 import { Diff } from './Diff';
@@ -31,8 +32,29 @@ function isUrl(text: string | null): text is string {
   return text !== null && /^https?:\/\//.test(text);
 }
 
+function usePrLineUrl(pr: RunPr | null, todo: Todo): string | null {
+  const anchor = parseAnchor(todo.evidence[0]?.ref);
+  const path = anchor === null ? undefined : todo.diffs?.find((diff) => anchorMatchesPath(anchor.path, diff.path))?.path;
+  const line = anchor?.line;
+  const [url, setUrl] = useState<string | null>(null);
+  useEffect(() => {
+    setUrl(null);
+    if (pr === null || path === undefined || line === undefined) return;
+    let current = true;
+    void prLineUrl(pr.url, path, line).then((next) => {
+      if (current) setUrl(next);
+    });
+    return () => {
+      current = false;
+    };
+  }, [pr, path, line]);
+  return url;
+}
+
 function FindingBar(props: FindingProps) {
   const { todo } = props;
+  const anchor = parseAnchor(todo.evidence[0]?.ref);
+  const lineUrl = usePrLineUrl(props.pr, todo);
   const editable = todo.state === 'open' || todo.state === 'answered';
   let content;
   if (editable && props.mode === 'self-check') {
@@ -52,6 +74,16 @@ function FindingBar(props: FindingProps) {
   } else if (editable) {
     content = (
       <>
+        {anchor !== null ? (
+          <div className="comment-anchor muted mono">
+            {`Comment goes on ${anchor.path}:${anchor.line}`}
+            {lineUrl !== null ? (
+              <a className="finding-link" href={lineUrl} target="_blank" rel="noreferrer">
+                Open line in PR
+              </a>
+            ) : null}
+          </div>
+        ) : null}
         <textarea
           value={props.draft}
           placeholder="Draft the review comment you would leave on the PR"
@@ -150,6 +182,9 @@ function Asking({ todo, onAsk }: { todo: Todo; onAsk: (text: string) => void }) 
 export function FindingPane(props: FindingProps) {
   const { run, todo, agents } = props;
   const conversation = todo.conversation ?? [];
+  const anchor = parseAnchor(todo.evidence[0]?.ref);
+  const evidenceRefs = [...new Set(todo.evidence.map((item) => item.ref))];
+  const lineUrl = usePrLineUrl(props.pr, todo);
   return (
     <>
       <div className="detail-scroll">
@@ -172,9 +207,9 @@ export function FindingPane(props: FindingProps) {
           ) : null}
           {todo.evidence.length > 0 || todo.links.length > 0 ? (
             <div className="finding-refs">
-              {todo.evidence.map((item) => (
-                <button key={item.ref} className="ref mono" title="Copy reference" onClick={() => props.onCopy(item.ref)}>
-                  {item.ref}
+              {evidenceRefs.map((ref) => (
+                <button key={ref} className="ref mono" title="Copy reference" onClick={() => props.onCopy(ref)}>
+                  {ref}
                 </button>
               ))}
               {todo.links.map((link) => (
@@ -182,6 +217,11 @@ export function FindingPane(props: FindingProps) {
                   {link.label}
                 </a>
               ))}
+              {lineUrl !== null && anchor !== null ? (
+                <a className="finding-link" href={lineUrl} target="_blank" rel="noreferrer">
+                  {`Line ${anchor.line} in PR`}
+                </a>
+              ) : null}
             </div>
           ) : null}
           {todo.diffs !== undefined && todo.diffs.length > 0 ? (
@@ -189,7 +229,12 @@ export function FindingPane(props: FindingProps) {
               <h3>Change</h3>
               <div className="diffs">
                 {todo.diffs.map((diff) => (
-                  <Diff key={diff.path} path={diff.path} patch={diff.patch} />
+                  <Diff
+                    key={diff.path}
+                    path={diff.path}
+                    patch={diff.patch}
+                    focusLine={anchor !== null && anchorMatchesPath(anchor.path, diff.path) ? anchor.line : undefined}
+                  />
                 ))}
               </div>
             </section>

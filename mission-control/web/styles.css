@@ -2141,6 +2141,15 @@ button.block:hover {
   color: var(--red);
 }
 
+.dl.focus {
+  box-shadow: inset 3px 0 0 var(--amber);
+  background: rgba(var(--amber-rgb), 0.14);
+}
+
+.dl.focus i {
+  color: var(--amber);
+}
+
 .dl.ctx span::before {
   content: '  ';
 }
@@ -2754,4 +2763,10 @@ button.block:hover {
 
 .group-toggle:hover {
   color: var(--text-soft);
+}
+
+.comment-anchor {
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }

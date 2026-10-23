@@ -21,6 +21,7 @@ import type { Agent, LiveState, Position, Run, RunMode, RunPr, Session, Thread, 
 
 const SAFE_ID = /^[A-Za-z0-9._-]+$/;
 const PRUNE_AFTER_MS = 14 * 24 * 60 * 60 * 1000;
+export const AUTO_ARCHIVE_AFTER_MS = 60 * 60 * 1000;
 const LOCK_RETRY_MS = 25;
 const LOCK_TIMEOUT_MS = 5000;
 const LOCK_STALE_MS = 10000;
@@ -242,6 +243,40 @@ export async function setArchived(sessionId: string, archived: boolean): Promise
     else ids.delete(sessionId);
     writeArchived(ids);
   });
+}
+
+function keptPath(): string {
+  return join(mcHome(), 'kept.json');
+}
+
+export function readKept(): Map<string, string> {
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(keptPath(), 'utf8'));
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return new Map();
+    return new Map(Object.entries(parsed).filter((entry): entry is [string, string] => typeof entry[1] === 'string'));
+  } catch {
+    return new Map();
+  }
+}
+
+export async function setKept(sessionId: string, at: string | null): Promise<void> {
+  await withFileLock(`${keptPath()}.lock`, () => {
+    const kept = readKept();
+    if (at === null) kept.delete(sessionId);
+    else kept.set(sessionId, at);
+    ensureRunsDir();
+    const path = keptPath();
+    const tmp = `${path}.tmp-${process.pid}`;
+    writeFileSync(tmp, JSON.stringify(Object.fromEntries(kept), null, 2));
+    renameSync(tmp, path);
+  });
+}
+
+export function isAutoArchived(thread: Thread, keptAt: string | undefined, now: number): boolean {
+  if (threadGroup(thread) !== 'idle') return false;
+  const lastActivity = Date.parse(thread.updatedAt);
+  if (now - lastActivity < AUTO_ARCHIVE_AFTER_MS) return false;
+  return keptAt === undefined || Date.parse(keptAt) < lastActivity;
 }
 
 function namesPath(): string {
@@ -729,6 +764,8 @@ export function buildThreads(
   modPolls: ReadonlyMap<string, number>,
   customNames: Readonly<Record<string, string>> = {},
   syncs: ReadonlyMap<string, string> = new Map(),
+  kept: ReadonlyMap<string, string> = new Map(),
+  now: number = Date.now(),
 ): Thread[] {
   const groups = groupRunsBySession(runs);
   const withRuns = [...groups]
@@ -744,9 +781,10 @@ export function buildThreads(
   const threads = [...withRuns, ...stepsOnly].map((thread) => {
     const custom = customNames[thread.sessionId];
     const named = custom === undefined || custom === '' ? thread : { ...thread, displayName: custom };
-    return { ...named, syncRequestedAt: syncs.get(thread.sessionId) ?? null };
+    const archived = thread.archived || isAutoArchived(thread, kept.get(thread.sessionId), now);
+    return { ...named, archived, syncRequestedAt: syncs.get(thread.sessionId) ?? null };
   });
-  return threads.sort(
+  return threads.filter((thread) => showArchived || !thread.archived).sort(
     (a, b) =>
       GROUP_ORDER.indexOf(threadGroup(a)) - GROUP_ORDER.indexOf(threadGroup(b)) ||
       Date.parse(b.updatedAt) - Date.parse(a.updatedAt),

@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { buildThreads, markAnswerer, markFallbackFailed, mergeRun, parsePushInput, readNames, readRun, restartQuestion, setName, writeRun } from './store';
+import { AUTO_ARCHIVE_AFTER_MS, buildThreads, markAnswerer, markFallbackFailed, mergeRun, parsePushInput, readNames, readRun, restartQuestion, setName, writeRun } from './store';
 import type { Position, Run, Session, Todo } from './types';
 
 const SESSION: Session = {
@@ -145,7 +145,8 @@ describe('threads from steps', () => {
   });
 
   test('without a Conductor row the session id is the name', () => {
-    const [thread] = buildThreads([], new Map(), new Set(), false, new Map([['s9', stepsFile(true)]]), new Map());
+    const steps = new Map([['s9', stepsFile(true)]]);
+    const [thread] = buildThreads([], new Map(), new Set(), false, steps, new Map(), {}, new Map(), new Map(), Date.parse('2026-10-10T09:30:00.000Z'));
     expect(thread?.displayName).toBe('s9');
     expect(thread?.session.workspacePath).toBe('');
   });
@@ -353,5 +354,45 @@ describe('context dir and the answerer', () => {
       else process.env.MC_HOME = previous;
       rmSync(home, { recursive: true, force: true });
     }
+  });
+});
+
+describe('auto archive', () => {
+  const now = Date.parse('2026-10-23T12:00:00.000Z');
+
+  function idleRun(updatedAt: string): Run {
+    const run = push([pick('codex', 'a'), pick('grok', 'a')], 'a');
+    run.todos.forEach((todo) => {
+      todo.state = 'done';
+    });
+    run.updatedAt = updatedAt;
+    return run;
+  }
+
+  function build(run: Run, kept: Map<string, string> = new Map(), showArchived = false) {
+    return buildThreads([run], new Map(), new Set(), showArchived, new Map(), new Map(), {}, new Map(), kept, now);
+  }
+
+  test('archives an idle thread after an hour without activity', () => {
+    const stale = idleRun(new Date(now - AUTO_ARCHIVE_AFTER_MS).toISOString());
+    expect(build(stale)).toEqual([]);
+    expect(build(stale, new Map(), true)[0]?.archived).toBe(true);
+  });
+
+  test('keeps a recently active idle thread visible', () => {
+    const fresh = idleRun(new Date(now - AUTO_ARCHIVE_AFTER_MS + 60000).toISOString());
+    expect(build(fresh)[0]?.archived).toBe(false);
+  });
+
+  test('never archives a thread that needs you', () => {
+    const run = push([pick('codex', 'a'), pick('grok', 'a')], 'a');
+    run.updatedAt = '2026-10-01T00:00:00.000Z';
+    expect(build(run)[0]?.archived).toBe(false);
+  });
+
+  test('a manual unarchive holds until the thread has new activity', () => {
+    const stale = idleRun('2026-10-23T09:00:00.000Z');
+    expect(build(stale, new Map([['s1', '2026-10-23T10:00:00.000Z']]))[0]?.archived).toBe(false);
+    expect(build(stale, new Map([['s1', '2026-10-23T08:00:00.000Z']]))).toEqual([]);
   });
 });

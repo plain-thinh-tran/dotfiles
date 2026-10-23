@@ -28,6 +28,7 @@ import {
   listRuns,
   pruneRuns,
   readArchived,
+  readKept,
   readNames,
   setName,
   readSteps,
@@ -39,6 +40,7 @@ import {
   readRun,
   runsDir,
   setArchived,
+  setKept,
   setSync,
   withRunLock,
   writeRun,
@@ -47,6 +49,7 @@ import type { Run, Todo } from './types';
 
 const PORT = Number(process.env.PORT ?? 4747);
 const LIVE_INTERVAL_MS = 3000;
+const AUTO_ARCHIVE_CHECK_MS = 60000;
 const PING_INTERVAL_MS = 15000;
 const PRESENCE_TTL_MS = 30000;
 const MAX_NAME_LENGTH = 120;
@@ -69,7 +72,7 @@ function wantsArchived(req: Request): boolean {
 }
 
 function currentThreads(showArchived: boolean) {
-  return buildThreads(listRuns(), liveStates, readArchived(), showArchived, readSteps(), lastModPollAt, readNames(), syncRequests);
+  return buildThreads(listRuns(), liveStates, readArchived(), showArchived, readSteps(), lastModPollAt, readNames(), syncRequests, readKept());
 }
 
 function notFound(message: string): Response {
@@ -441,6 +444,7 @@ async function archiveThread(req: ThreadRequest, archived: boolean): Promise<Res
   const { sessionId } = req.params;
   if (archived && !threadExists(sessionId)) return notFound('Thread not found');
   await setArchived(sessionId, archived);
+  await setKept(sessionId, archived ? null : new Date().toISOString());
   broadcast();
   return Response.json({ ok: true });
 }
@@ -571,5 +575,13 @@ const server = Bun.serve({
 
 watchRuns();
 setInterval(() => void refreshLive(), LIVE_INTERVAL_MS);
+let visibleThreadIds = '';
+setInterval(() => {
+  const next = currentThreads(false)
+    .map((thread) => thread.sessionId)
+    .join(',');
+  if (next !== visibleThreadIds) broadcast();
+  visibleThreadIds = next;
+}, AUTO_ARCHIVE_CHECK_MS);
 setInterval(() => clients.forEach((client) => send(client, ': ping\n\n')), PING_INTERVAL_MS);
 console.log(`Mission Control on http://${server.hostname}:${server.port}`);
