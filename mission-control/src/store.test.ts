@@ -1,5 +1,8 @@
 import { describe, expect, test } from 'bun:test';
-import { buildThreads, mergeRun, parsePushInput } from './store';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { buildThreads, markAnswerer, markFallbackFailed, mergeRun, parsePushInput, readNames, readRun, restartQuestion, setName, writeRun } from './store';
 import type { Position, Run, Session, Todo } from './types';
 
 const SESSION: Session = {
@@ -243,5 +246,112 @@ describe('run mode', () => {
     const parsed = parsePushInput({ runId: 'x', skill: 's', title: 't', mode: 'nonsense', pr: { number: 3, url: 'u', author: 'a' } });
     expect(parsed.mode).toBeUndefined();
     expect(parsed.pr).toEqual({ number: 3, url: 'u', author: 'a' });
+  });
+});
+
+describe('thread names', () => {
+  const todos = [{ id: 'T', title: 'T' }];
+  const runIn = (runId: string, title: string, sessionId: string) =>
+    mergeRun(null, { runId, skill: 'prod-ready-check', title, todos }, { ...SESSION, conductorSessionId: sessionId, workspaceName: 'belgrade-v2' });
+  const conductor = (overrides: object = {}) => ({
+    workspaceName: 'Jesus message',
+    userSetName: true,
+    prTitle: '',
+    branch: 'jesus-message',
+    title: '',
+    workspacePath: '/w',
+    directoryName: 'belgrade-v2',
+    repoName: 'services',
+    ...overrides,
+  });
+  const names = (list: Run[], info: Map<string, { state: 'idle'; names: ReturnType<typeof conductor> | null; activityAt: null }> = new Map(), custom = {}) =>
+    buildThreads(list, info, new Set(), false, new Map(), new Map(), custom).map((thread) => thread.displayName);
+
+  test('threads without a Conductor row read their newest run title, not the shared workspace name', () => {
+    const list = [runIn('a', 'PR #11506 Route grouper', 's1'), runIn('b', 'PR #10439 Fix mailer', 's2'), runIn('c', 'PR #9 Docs', 's3')];
+    expect(names(list).sort()).toEqual(['PR #10439 Fix mailer', 'PR #11506 Route grouper', 'PR #9 Docs']);
+  });
+
+  test('the Conductor name beats the run title and a custom name beats both', () => {
+    const run = runIn('a', 'PR #1 Title', 's1');
+    const info = new Map([['s1', { state: 'idle' as const, names: conductor(), activityAt: null }]]);
+    expect(names([run], info)).toEqual(['Jesus message']);
+    expect(names([run], info, { s1: 'My own name' })).toEqual(['My own name']);
+    expect(names([run], new Map(), { s1: 'My own name' })).toEqual(['My own name']);
+  });
+
+  test('a Conductor row with only a branch still beats the run title, and a PR title beats the branch', () => {
+    const run = runIn('a', 'PR #1 Title', 's1');
+    const branchOnly = new Map([['s1', { state: 'idle' as const, names: conductor({ userSetName: false, workspaceName: '' }), activityAt: null }]]);
+    expect(names([run], branchOnly)).toEqual(['jesus-message']);
+    const withPr = new Map([['s1', { state: 'idle' as const, names: conductor({ userSetName: false, prTitle: 'Fix(PE-1): thing' }), activityAt: null }]]);
+    expect(names([run], withPr)).toEqual(['Fix(PE-1): thing']);
+  });
+
+  test('custom names are stored in names.json and an empty name resets them', async () => {
+    const previous = process.env.MC_HOME;
+    const home = mkdtempSync(join(tmpdir(), 'mc-names-'));
+    process.env.MC_HOME = home;
+    try {
+      await setName('s1', '  Fix the mailer  ');
+      await setName('s2', 'Other');
+      expect(readNames()).toEqual({ s1: 'Fix the mailer', s2: 'Other' });
+      await setName('s1', '');
+      await setName('s2', null);
+      expect(readNames()).toEqual({});
+    } finally {
+      if (previous === undefined) delete process.env.MC_HOME;
+      else process.env.MC_HOME = previous;
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('context dir and the answerer', () => {
+  test('contextDir is parsed from a push and kept when a later push omits it', () => {
+    const parsed = parsePushInput({ runId: 'x', skill: 's', title: 't', contextDir: '/ws/.context/prod-ready-check/pr-9' });
+    expect(parsed.contextDir).toBe('/ws/.context/prod-ready-check/pr-9');
+    expect(parsePushInput({ runId: 'x', skill: 's', title: 't', contextDir: '' }).contextDir).toBeUndefined();
+    const first = mergeRun(null, { runId: 'x', skill: 's', title: 't', contextDir: '/a', todos: [{ id: 'T', title: 'T' }] }, SESSION);
+    expect(mergeRun(first, { runId: 'x', skill: 's', title: 't' }, SESSION).contextDir).toBe('/a');
+    expect(mergeRun(first, { runId: 'x', skill: 's', title: 't', contextDir: '/b' }, SESSION).contextDir).toBe('/b');
+  });
+
+  test('overview is parsed from a push, lands on the thread and is kept when a later push omits it', () => {
+    expect(parsePushInput({ runId: 'x', skill: 's', title: 't', overview: '  Problem text  ' }).overview).toBe('Problem text');
+    expect(parsePushInput({ runId: 'x', skill: 's', title: 't', overview: '  ' }).overview).toBeUndefined();
+    const threadOf = (run: Run) => buildThreads([run], new Map(), new Set(), false, new Map(), new Map())[0];
+    const first = mergeRun(null, { runId: 'x', skill: 's', title: 't', overview: 'Problem text', todos: [{ id: 'T', title: 'T' }] }, SESSION);
+    expect(threadOf(first)?.overview).toBe('Problem text');
+    const again = mergeRun(first, { runId: 'x', skill: 's', title: 't' }, SESSION);
+    expect(threadOf(again)?.overview).toBe('Problem text');
+  });
+
+  test('markAnswerer tags the pending question and restartQuestion clears a failure and restarts the clock', async () => {
+    const previous = process.env.MC_HOME;
+    const home = mkdtempSync(join(tmpdir(), 'mc-answerer-'));
+    process.env.MC_HOME = home;
+    try {
+      const run = mergeRun(null, { runId: 'r1', skill: 's', title: 't', todos: [{ id: 'T', title: 'T' }] }, SESSION);
+      run.todos[0]!.conversation = [{ from: 'thinh', text: 'Why?', at: '2026-01-01T00:00:00.000Z', pending: true }];
+      writeRun(run);
+      await markAnswerer('r1', 'T', 'Other question', 'notes');
+      expect(readRun('r1')?.todos[0]?.conversation?.[0]?.answerer).toBeUndefined();
+      await markAnswerer('r1', 'T', 'Why?', 'notes');
+      await markFallbackFailed('r1', 'T', 'Why?');
+      const failed = readRun('r1')?.todos[0]?.conversation?.[0];
+      expect(failed?.answerer).toBe('notes');
+      expect(failed?.fallbackFailed).toBe(true);
+      await restartQuestion('r1', 'T');
+      const restarted = readRun('r1')?.todos[0]?.conversation?.[0];
+      expect(restarted?.answerer).toBeUndefined();
+      expect(restarted?.fallbackFailed).toBeUndefined();
+      expect(restarted?.pending).toBe(true);
+      expect(Date.now() - new Date(restarted?.at ?? 0).getTime()).toBeLessThan(5000);
+    } finally {
+      if (previous === undefined) delete process.env.MC_HOME;
+      else process.env.MC_HOME = previous;
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 });

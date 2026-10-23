@@ -55,7 +55,7 @@ Model choices for every seat come from the benchmark in `~/.claude/skills/model-
 
 As soon as the run starts, push `<dir>/mc.json` with `runId`, `skill`, `title`, `summary` and `agents` and an empty `todos` list, so the session shows up in Mission Control with what it is about; push again with the decisions later. At the start of each step, run `~/.claude/bin/mc step "<step, under 6 words>" --agent <seat id from mc.json>` (your own id for chair work, `codex` or `grok` while their council call runs, `sonnet` while a worker packet runs) (for example "Design meeting, round 1", "Building packet 2 of 4", "Review meeting") so the user sees what the session is doing; run `~/.claude/bin/mc step --clear` after the report.
 
-Decisions the user owns go through Mission Control, not the chat. Write `<dir>/mc.json`:
+Decisions the user owns go through Mission Control, not the chat. Keep Mission Control in step with the chat: whenever Thinh settles or changes a decision in the conversation instead of in Mission Control, immediately run `~/.claude/bin/mc resolve <runId> <id> "settled in chat: <what was decided>"` for settled ones and re-push `mc.json` for changed ones, so he never has to re-verify something he already decided. Write `<dir>/mc.json`:
 
 - `runId`: `avengers-<slug>`; `skill`: `avengers`; `title`: one line; `summary`: one sentence on what the change does and why, in plain words ("Add an SQS queue behind S3 notifications and in front of the groupers to provide a fallback mechanism"), never what the council did, so the user knows the thread at a glance when they come back to it.
 - `agents`: the seats that took part, with `role` `orchestrator` for you, `council` for Codex Sol and Cursor Grok.
@@ -67,7 +67,7 @@ When the wait prints decisions, a "QUESTION from Thinh" line means answer it wit
 
 ## Council Failures
 
-`council.sh` prints each member's output path or a FAILED line with its log tail. If one member fails, rerun once; if it fails again, hold the meeting with whoever answered and say in the report which seat was empty. If both fail, stop and show the user the logs. A missing Cursor CLI installs with `curl https://cursor.com/install -fsS | bash`.
+`council.sh` prints each member's output path or a FAILED line with its log tail. A seat can also hang until the background timeout with no FAILED line (Codex reading the whole repo on a large diff); run review meetings with `CODEX_EFFORT=medium` and `timeout` 7200000. If one member fails, rerun once; if it fails again, hold the meeting with whoever answered and say in the report which seat was empty. If both fail, stop and show the user the logs. A missing Cursor CLI installs with `curl https://cursor.com/install -fsS | bash`.
 
 Models default to `gpt-6-sol` (Codex, needs codex CLI 0.159 or newer; `brew upgrade codex`) and `cursor-grok-4.6-medium` (Cursor, needs `CURSOR_API_KEY`; list ids with `cursor-agent models`). Override with `CODEX_MODEL`, `CODEX_EFFORT` and `CURSOR_MODEL`.
 

@@ -15,7 +15,8 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { councilAgrees } from './council';
 import { isRunMode, modeOf } from './mode';
-import { isReadyToSubmit } from './prompt';
+import { isReadyToSubmit, latestThinhMessage } from './prompt';
+import { GROUP_ORDER, threadGroup } from './threadGroups';
 import type { Agent, LiveState, Position, Run, RunMode, RunPr, Session, Thread, Todo, TodoCategory } from './types';
 
 const SAFE_ID = /^[A-Za-z0-9._-]+$/;
@@ -46,8 +47,10 @@ export type PushInput = {
   skill: string;
   title: string;
   summary?: string;
+  overview?: string;
   mode?: RunMode;
   pr?: RunPr;
+  contextDir?: string;
   session?: Partial<Session>;
   agents?: Agent[];
   todos?: TodoInput[];
@@ -241,6 +244,59 @@ export async function setArchived(sessionId: string, archived: boolean): Promise
   });
 }
 
+function namesPath(): string {
+  return join(mcHome(), 'names.json');
+}
+
+export function readNames(): Record<string, string> {
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(namesPath(), 'utf8'));
+    if (!isRecord(parsed)) return {};
+    return Object.fromEntries(Object.entries(parsed).filter((entry): entry is [string, string] => typeof entry[1] === 'string'));
+  } catch {
+    return {};
+  }
+}
+
+function syncPath(): string {
+  return join(mcHome(), 'sync.json');
+}
+
+export function readSyncs(): Map<string, string> {
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(syncPath(), 'utf8'));
+    if (!isRecord(parsed)) return new Map();
+    return new Map(Object.entries(parsed).filter((entry): entry is [string, string] => typeof entry[1] === 'string'));
+  } catch {
+    return new Map();
+  }
+}
+
+export async function setSync(sessionId: string, requestedAt: string | null): Promise<void> {
+  await withFileLock(`${syncPath()}.lock`, () => {
+    const syncs = readSyncs();
+    if (requestedAt === null) syncs.delete(sessionId);
+    else syncs.set(sessionId, requestedAt);
+    const path = syncPath();
+    const tmp = `${path}.tmp-${process.pid}`;
+    writeFileSync(tmp, JSON.stringify(Object.fromEntries(syncs), null, 2));
+    renameSync(tmp, path);
+  });
+}
+
+export async function setName(sessionId: string, name: string | null): Promise<void> {
+  await withFileLock(`${namesPath()}.lock`, () => {
+    const names = readNames();
+    const trimmed = name?.trim() ?? '';
+    if (trimmed === '') delete names[sessionId];
+    else names[sessionId] = trimmed;
+    ensureRunsDir();
+    const tmp = `${namesPath()}.tmp-${process.pid}`;
+    writeFileSync(tmp, JSON.stringify(names, null, 2));
+    renameSync(tmp, namesPath());
+  });
+}
+
 async function changeTodo(runId: string, todoId: string, change: (todo: Todo, at: string) => void): Promise<boolean> {
   let found = false;
   await updateRun(runId, (run) => {
@@ -275,6 +331,22 @@ export async function markFallbackFailed(runId: string, todoId: string, text: st
   return await changeTodo(runId, todoId, (todo) => {
     const latest = [...(todo.conversation ?? [])].reverse().find((message) => message.from === 'thinh');
     if (latest?.pending === true && latest.text === text) patchLatestThinh(todo, { fallbackFailed: true });
+  });
+}
+
+export async function markAnswerer(runId: string, todoId: string, text: string, answerer: 'session' | 'notes'): Promise<boolean> {
+  return await changeTodo(runId, todoId, (todo) => {
+    const latest = latestThinhMessage(todo);
+    if (latest?.pending === true && latest.text === text) patchLatestThinh(todo, { answerer });
+  });
+}
+
+export async function restartQuestion(runId: string, todoId: string): Promise<boolean> {
+  return await changeTodo(runId, todoId, (todo, at) => {
+    const latest = latestThinhMessage(todo);
+    if (latest?.pending !== true || latest.submittedAt !== undefined) return;
+    const { fallbackFailed: _failed, answerer: _answerer, ...rest } = latest;
+    todo.conversation = (todo.conversation ?? []).map((message) => (message === latest ? { ...rest, at } : message));
   });
 }
 
@@ -363,8 +435,10 @@ export function parsePushInput(raw: unknown): PushInput {
     skill: requireString(raw, 'skill', 'input'),
     title: requireString(raw, 'title', 'input'),
     summary: typeof raw.summary === 'string' && raw.summary.trim() !== '' ? raw.summary.trim() : undefined,
+    overview: typeof raw.overview === 'string' && raw.overview.trim() !== '' ? raw.overview.trim() : undefined,
     mode: isRunMode(raw.mode) ? raw.mode : undefined,
     pr: parsePr(raw.pr),
+    contextDir: typeof raw.contextDir === 'string' && raw.contextDir !== '' ? raw.contextDir : undefined,
     session: isRecord(raw.session) ? (raw.session as Partial<Session>) : undefined,
     agents: Array.isArray(raw.agents) ? raw.agents.map(parseAgent) : undefined,
     todos: Array.isArray(raw.todos) ? raw.todos.map(parseTodoInput) : undefined,
@@ -436,6 +510,7 @@ function toTodo(input: TodoInput, existing: Todo | undefined, now: string): Todo
     evidence: input.evidence ?? [],
     diffs: input.diffs ?? [],
     ...(input.severity !== undefined ? { severity: input.severity } : {}),
+    ...(input.alsoRaisedAs !== undefined ? { alsoRaisedAs: input.alsoRaisedAs } : {}),
     ...(input.verification !== undefined ? { verification: input.verification } : {}),
     ...(input.draftComment !== undefined ? { draftComment: input.draftComment } : {}),
     ...(input.suggestedQuestions !== undefined ? { suggestedQuestions: input.suggestedQuestions } : {}),
@@ -450,10 +525,15 @@ function toTodo(input: TodoInput, existing: Todo | undefined, now: string): Todo
   };
 }
 
-function modeFields(input: PushInput, existing: Run | null): Pick<Run, 'mode' | 'pr'> {
+function modeFields(input: PushInput, existing: Run | null): Pick<Run, 'mode' | 'pr' | 'contextDir'> {
   const mode = input.mode ?? existing?.mode;
   const pr = input.pr ?? existing?.pr;
-  return { ...(mode !== undefined ? { mode } : {}), ...(pr !== undefined ? { pr } : {}) };
+  const contextDir = input.contextDir ?? existing?.contextDir;
+  return {
+    ...(mode !== undefined ? { mode } : {}),
+    ...(pr !== undefined ? { pr } : {}),
+    ...(contextDir !== undefined ? { contextDir } : {}),
+  };
 }
 
 export function mergeRun(existing: Run | null, input: PushInput, fallbackSession: Session): Run {
@@ -469,6 +549,7 @@ export function mergeRun(existing: Run | null, input: PushInput, fallbackSession
     skill: input.skill,
     title: input.title,
     summary: input.summary ?? existing?.summary ?? '',
+    overview: input.overview ?? existing?.overview ?? '',
     ...modeFields(input, existing),
     status: pushed.length > 0 ? 'active' : (existing?.status ?? 'active'),
     createdAt: existing?.createdAt ?? now,
@@ -489,12 +570,6 @@ function mergeAgents(runs: Run[]): Agent[] {
   return [...agents.filter((a) => a.role === 'orchestrator'), ...agents.filter((a) => a.role !== 'orchestrator')];
 }
 
-function liveRank(live: LiveState): number {
-  if (live === 'waiting_on_you') return 0;
-  if (live === 'working') return 1;
-  return 2;
-}
-
 function countTodos(runs: Run[], matches: (todo: Todo) => boolean): number {
   return runs.reduce((sum, run) => sum + run.todos.filter(matches).length, 0);
 }
@@ -504,12 +579,13 @@ function sortTodos(run: Run): Run {
   return { ...run, todos };
 }
 
-function displayNameOf(names: ConductorNames | null, fallback: string): string {
-  if (names === null) return fallback;
-  if (names.userSetName && names.workspaceName !== '') return names.workspaceName;
-  if (names.prTitle !== '') return names.prTitle;
-  if (names.branch !== '') return names.branch;
-  return fallback;
+function displayNameOf(names: ConductorNames | null, runTitle: string, workspaceName: string): string {
+  if (names !== null) {
+    if (names.userSetName && names.workspaceName !== '') return names.workspaceName;
+    if (names.prTitle !== '') return names.prTitle;
+    if (names.branch !== '') return names.branch;
+  }
+  return runTitle !== '' ? runTitle : workspaceName;
 }
 
 function descriptionOf(names: ConductorNames | null, runs: Run[]): string {
@@ -522,6 +598,11 @@ function descriptionOf(names: ConductorNames | null, runs: Run[]): string {
 function summaryOf(runs: Run[]): string {
   const newestFirst = [...runs].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   return newestFirst.find((run) => run.summary !== undefined && run.summary !== '')?.summary ?? '';
+}
+
+function overviewOf(runs: Run[]): string {
+  const newestFirst = [...runs].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  return newestFirst.find((run) => run.overview !== undefined && run.overview !== '')?.overview ?? '';
 }
 
 function liveFor(state: LiveState, runs: Run[]): LiveState {
@@ -552,9 +633,11 @@ function toThread(
     archived,
     instantAsk,
     session: latest.session,
-    displayName: displayNameOf(names, latest.session.workspaceName),
+    displayName: displayNameOf(names, latest.title, latest.session.workspaceName),
+    syncRequestedAt: null,
     description: descriptionOf(names, runs),
     summary: summaryOf(runs),
+    overview: overviewOf(runs),
     mode: modeOf(latest),
     pr: latest.pr ?? null,
     live: liveFor(info?.state ?? 'dead', runs),
@@ -604,9 +687,11 @@ function toStepsOnlyThread(
     archived,
     instantAsk,
     session,
-    displayName: displayNameOf(names, session.workspaceName),
+    displayName: displayNameOf(names, '', session.workspaceName),
+    syncRequestedAt: null,
     description: names?.title ?? '',
     summary: '',
+    overview: '',
     mode: 'build',
     pr: null,
     live: liveFor(info?.state ?? 'dead', []),
@@ -642,6 +727,8 @@ export function buildThreads(
   showArchived: boolean,
   steps: ReadonlyMap<string, StepsFile>,
   modPolls: ReadonlyMap<string, number>,
+  customNames: Readonly<Record<string, string>> = {},
+  syncs: ReadonlyMap<string, string> = new Map(),
 ): Thread[] {
   const groups = groupRunsBySession(runs);
   const withRuns = [...groups]
@@ -654,11 +741,14 @@ export function buildThreads(
     .map(([sessionId, file]) =>
       toStepsOnlyThread(sessionId, live.get(sessionId), archived.has(sessionId), file, recentlyPolled(modPolls.get(sessionId), Date.now())),
     );
-  const threads = [...withRuns, ...stepsOnly];
+  const threads = [...withRuns, ...stepsOnly].map((thread) => {
+    const custom = customNames[thread.sessionId];
+    const named = custom === undefined || custom === '' ? thread : { ...thread, displayName: custom };
+    return { ...named, syncRequestedAt: syncs.get(thread.sessionId) ?? null };
+  });
   return threads.sort(
     (a, b) =>
-      Number(a.archived) - Number(b.archived) ||
-      liveRank(a.live) - liveRank(b.live) ||
-      b.updatedAt.localeCompare(a.updatedAt),
+      GROUP_ORDER.indexOf(threadGroup(a)) - GROUP_ORDER.indexOf(threadGroup(b)) ||
+      Date.parse(b.updatedAt) - Date.parse(a.updatedAt),
   );
 }

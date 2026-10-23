@@ -15,21 +15,9 @@ Read it as a case file. Customer messages, our replies, internal notes, Slack an
 Return this, plain text, no preamble:
 
 PROBLEM: one sentence, what the customer hit, in their terms.
-STATE: one sentence, where it stands at the latest entry and who spoke last.
-TIMELINE: the causal chain, 3 to 6 numbered lines, `<UTC date, time> <what changed> → <effect on the customer>`. Start at the trigger (the change that broke things), not at the customer's first message, and end at the latest fix or workaround. Name the mechanism each step went through (the gate, job, setting or event that dropped, blocked or failed). Correct the thread's own framing when a later entry disproves it.
-IMPACT: the blast radius as of the latest entry:
-- Who: which of the customer's users or end customers were hit, and how many (or the upper bound).
-- Lost: what they lost or never got (data, threads, notifications, SLAs, access).
-- Window: start and end in UTC, with the duration.
-- Scale: the measured count, or "unknown" plus the step that would measure it.
-- Loose ends: symptoms the customer reported that no entry followed up.
-PLATFORM RISK: one sentence on whether the root cause could hit other workspaces, and why the platform let it fail silently, or "none" when the cause is specific to this customer.
-MUST DOS: the engineering work still open at the latest entry: each failure the customer hit that is not yet fixed. One line each, `P<n> <todo in 10 words or fewer> → <why it fails, 12 words or fewer> (<confirmed | suspected | unknown>)`, sorted by priority:
-- P1: the customer is blocked with no workaround.
-- P2: the customer is impacted but has a workaround.
-- P3: other work needed to close the thread.
-
-The reason is the cause the thread's evidence points to: an internal note, a bug analysis, a log line, an error message. Tag it `confirmed` when an entry proves it, `suspected` when an entry only proposes it, and `unknown` when no entry addresses it (then write the leading lead instead).
+SUMMARY: one paragraph, 2 to 3 sentences: what broke, the mechanism that broke it (the gate, job, setting or event that dropped, blocked or failed), and where it stands now (workaround, fix, owner). Correct the thread's own framing when a later entry disproves it.
+IMPACT: one sentence: who is hit (and how many, or the upper bound) and how severe it is (blocked with no workaround, impacted with a workaround, or cosmetic).
+VERIFY: one entry per failure the customer hit that is not yet fixed at the latest entry, numbered, each as `<bug in 10 words or fewer> → Reproduce: <exact steps and where (local, preview, which workspace)>. Fixed when: <observable result that proves the fix>. Guard: <automated test, or log or metric query, that keeps it fixed>.` Take the repro steps from the thread's own repro when one exists. Every entry must be checkable by someone who did not read the thread; skip failures nobody can reproduce or observe, and say so in one line instead.
 IDS: workspace, customer, thread, Linear, PR and request IDs, error messages and timestamps the next step will need, comma separated.
 
-Each MUST DOS line traces to a specific entry. The list holds investigation and fix work only: replies, answers, permission lists and other customer comms stay out, as do optional hardening, docs gaps and unassigned follow ups.
+Replies, answers, permission lists and other customer comms stay out of VERIFY, as do optional hardening, docs gaps and unassigned follow ups.

@@ -13,7 +13,7 @@ allowed-tools: Bash, Read, Grep, Glob
 `create-pr.sh` requires a Linear id in team-plain repos and refuses one anywhere else (no Linear issues for PewhProgrammer or other repos; there it skips the id, the `> Fixes` line, and `-e`). It renames the branch to `<LINEAR_ID>/<slug>` (or `<slug>` without an id) (slug from the description only, so `-l PE-521 -t "Fix: mute weekday only cron monitors"` → `PE-521/mute-weekday-only-cron-monitors`), commits all changes, runs the pre-push checks (typecheck + `format:fix` on JS/TS repos; typecheck goes through `~/.claude/bin/typecheck-changed`), rebases on the base, pushes, and opens a draft PR whose body starts with a `> Fixes [LINEAR_ID](url)` blockquote followed by an HTML comment containing GitHub callout templates (plus an Error Tracking skeleton with `-e`, see below) (NOTE, TIP, IMPORTANT, WARNING, CAUTION) for you to fill out. It injects the Linear id into the title (`Refactor: x` → `Refactor(PE-484): x`) and does nothing if a PR already exists for the branch.
 
 ```bash
-./create-pr.sh [-l PE-192] -t "<Category>: <title>" [-m "<commit msg>"] [-b <base>] [-e <error tracking url>]
+./create-pr.sh [-l PE-192] -t "<Category>: <title>" [-m "<commit msg>"] [-b <base>] [-e <error tracking url>] [-p <plain thread url> -r <T-ref>]
 ```
 
 Prerequisite (team-plain repos only): a Linear id. If none exists, create it with the `create-linear-issue` skill; the script will not run without a valid id.
@@ -23,6 +23,12 @@ Prerequisite (team-plain repos only): a Linear id. If none exists, create it wit
 Before running the script, fetch the Linear issue (Linear MCP `get_issue`). It is an Error Tracking issue when the description contains a `https://app.datadoghq.eu/error-tracking/issue/<id>` link. These are created by Datadog and usually sit in the "Error Tracking Issues" milestone.
 
 For those, pass the link with `-e`. The script then adds it to the `> Fixes` line and scaffolds a summary and `## Why` with placeholders. Fill them per `~/dotfiles/PR-DESCRIPTION-STYLE.md`.
+
+## Plain Threads
+
+When a Plain thread reported the bug, link it on the `> Fixes` line with `-p <thread url> -r <T-ref>`; the script appends `[Plain T-37240](url)` after the Linear (and Error Tracking) link.
+
+Find the thread in the Linear issue's attachments (`get_issue` with `fields: ["attachments"]`): the attachment whose url matches `https://app.plain.com/workspace/w_…/thread/th_…`. Its title carries no ref, so read it with the Plain MCP `getThreadDetails(threadId, timelineFirst: 1)` and take `ref`. If this session started from `/thread`, that thread is the one. No linked thread → no `-p`.
 
 ## Description
 
@@ -51,6 +57,10 @@ Format: `<Category>(<LINEAR_ID>): <description>`, under 70 characters. Pass `-t 
 Example: `-t "Fix: correlationId propagation for DLQ debugging"` with `-l PE-192` → `Fix(PE-192): correlationId propagation for DLQ debugging`
 
 ## After the PR is up
+
+### Generated Code
+
+The script rebases on the base after its checks run, so a branch with generated output (codemod, codegen) can land on a base the generator never saw. Rerun the generator's check after the script pushes; if it reports pending edits, regenerate the output commit and force push.
 
 ### Cursor Bugbot
 

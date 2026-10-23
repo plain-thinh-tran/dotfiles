@@ -83,6 +83,10 @@ function conductorSessions(sessionIds: string[]): Map<string, ConductorSession> 
   return sessions;
 }
 
+export function hasConductorSession(sessionId: string): boolean {
+  return conductorSessions([sessionId]).has(sessionId);
+}
+
 async function run(cmd: string[]): Promise<string> {
   const proc = Bun.spawn(cmd, { stdout: 'pipe', stderr: 'ignore' });
   const text = await new Response(proc.stdout).text();

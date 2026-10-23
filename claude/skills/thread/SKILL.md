@@ -1,13 +1,13 @@
 ---
 name: thread
-description: Pick up a Plain thread, rename the workspace branch after it, and report what happened, the impact and the remaining todos.
+description: Pick up a Plain thread, rename the workspace branch after it, and report what happened, the impact and a verification plan for Thinh to approve.
 disable-model-invocation: false
 argument-hint: <plain thread URL | th_ id | T-ref>
 ---
 
 # Thread
 
-Start an investigation from a Plain thread: name the Conductor workspace after it, read the whole thread, and hand Thinh what happened, the impact and the remaining todos so he can direct the next steps. This skill reads and reports. It does not start investigating the todos.
+Start an investigation from a Plain thread: name the Conductor workspace after it, read the whole thread, and hand Thinh what happened, the impact and a plan to verify each bug so he can approve it before any fix starts. This skill reads and reports. It does not start investigating or fixing.
 
 ## 1. Resolve the thread
 
@@ -32,28 +32,21 @@ Dispatch one subagent (`model: sonnet`, `run_in_background: false`) with the pro
 
 ## 4. Report
 
-Print exactly this, and nothing else:
+Print this as rendered markdown, never inside a code block (code blocks do not wrap, so long lines run off screen). Print nothing else:
 
-```
-T-12345 · <title> · <status> · P<priority>
-Branch: <new branch, or "unchanged (<reason>)">
+**T-12345 · <title> · <status> · P<priority>**
+Branch: `<new branch>`, or unchanged (<reason>)
 
-What happened
-1. <UTC timestamp> <what changed> → <effect>
+**What happened**
+<the subagent's SUMMARY: one paragraph, 2 to 3 sentences, no list>
+
+**Impact**
+<the subagent's IMPACT: one sentence, who is hit and how severe>
+
+**Verification plan**
+1. <bug> → Reproduce: <steps and where>. Fixed when: <observable result>. Guard: <test or check that keeps it fixed>.
 2. …
 
-Impact
-- <who was hit, and how many>
-- <what they lost>
-- <window, with duration>
-- <scale, or how to measure it>
-- <loose ends>
+Approve the plan or tell me what to change.
 
-Must dos
-P1 <todo> → <why it fails> (<confirmed | suspected | unknown>)
-P2 …
-
-Platform risk: <the subagent's PLATFORM RISK line>
-```
-
-Print the subagent's TIMELINE as "What happened", its IMPACT as "Impact" (drop bullets with nothing to say), and its MUST DOS as given, sorted P1 first. Write in plain English, so Thinh can repeat it to the team without decoding internal names. Omit the "Platform risk" line when the subagent returned "none".
+Write in plain English, so Thinh can repeat it to the team without decoding internal names. Keep "What happened" to 2 to 3 sentences and "Impact" to one sentence, even when the subagent returned more. Stop after the plan and wait for Thinh's approval; do not start reproducing or fixing.

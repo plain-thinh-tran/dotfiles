@@ -30,9 +30,20 @@ export function chosenLabel(todo: Todo): string {
   return optionsFor(todo).find((option) => option.id === answer.optionId)?.label ?? answer.optionId;
 }
 
-export const QUESTION_PATIENCE_MS = 75000;
+const MOD_PATIENCE_MS = 45000;
+const SESSION_PATIENCE_MS = 75000;
+const NOTES_PATIENCE_MS = 150000;
 
 type Message = NonNullable<Todo['conversation']>[number];
+
+export function questionPatienceMs(message: Message): number {
+  if (message.answerer === 'notes') return NOTES_PATIENCE_MS;
+  return message.answerer === 'session' ? SESSION_PATIENCE_MS : MOD_PATIENCE_MS;
+}
+
+export function isStaleQuestion(message: Message, now: number): boolean {
+  return message.fallbackFailed === true || now - new Date(message.at).getTime() >= questionPatienceMs(message);
+}
 
 export function latestThinhMessage(todo: Todo): Message | undefined {
   return [...(todo.conversation ?? [])].reverse().find((message) => message.from === 'thinh');
@@ -46,7 +57,7 @@ export function pendingQuestion(todo: Todo): string | null {
 export function isDeliverableQuestion(todo: Todo, now: number): boolean {
   const latest = latestThinhMessage(todo);
   if (latest === undefined || latest.pending !== true || latest.submittedAt !== undefined) return false;
-  return latest.fallbackFailed === true || now - new Date(latest.at).getTime() >= QUESTION_PATIENCE_MS;
+  return isStaleQuestion(latest, now);
 }
 
 export function hasUndeliveredQuestion(todo: Todo): boolean {

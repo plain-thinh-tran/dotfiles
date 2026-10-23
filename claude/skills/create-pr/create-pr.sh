@@ -11,15 +11,17 @@
 #      typecheck goes through ~/.claude/bin/typecheck-changed
 #   5. Rebase on origin/<base>, then push
 #   6. A PR with a proper title and a body that is ONLY the Linear link,
-#      or the Error Tracking skeleton when -e is given
+#      or the Error Tracking skeleton when -e is given; -p adds the Plain thread to the Fixes line
 #
 # Usage:
-#   create-pr.sh [-l <LINEAR_ID>] -t "<Category>: <title>" [-m "<commit msg>"] [-b <base>] [-e <error tracking url>]
+#   create-pr.sh [-l <LINEAR_ID>] -t "<Category>: <title>" [-m "<commit msg>"] [-b <base>] [-e <error tracking url>] [-p <plain thread url> [-r <T-ref>]]
 #
 # Example:
 #   create-pr.sh -l PE-192 -t "Fix: correlationId propagation for DLQ debugging"
 #   create-pr.sh -l PE-1120 -t "Fix: tolerate legacy customer emails" \
 #     -e https://app.datadoghq.eu/error-tracking/issue/42245ec8-b37b-11f1-a5b0-da7ad0900005
+#   create-pr.sh -l CORE-3013 -t "Fix: keep Next in queue in the board's column order" \
+#     -p https://app.plain.com/workspace/w_01G0EZ1XTM37C5X11SQTDNCTM1/thread/th_01M5DGNQJHXYQE6HXM58JB6KAP -r T-37240
 
 set -euo pipefail
 
@@ -30,14 +32,18 @@ TITLE=""
 COMMIT_MSG=""
 BASE="main"
 ERROR_URL=""
+PLAIN_URL=""
+PLAIN_REF=""
 
-while getopts ":l:t:m:b:e:h" opt; do
+while getopts ":l:t:m:b:e:p:r:h" opt; do
   case "$opt" in
     l) LINEAR_ID="$OPTARG" ;;
     t) TITLE="$OPTARG" ;;
     m) COMMIT_MSG="$OPTARG" ;;
     b) BASE="$OPTARG" ;;
     e) ERROR_URL="$OPTARG" ;;
+    p) PLAIN_URL="$OPTARG" ;;
+    r) PLAIN_REF="$OPTARG" ;;
     h) grep '^#' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     :) die "-$OPTARG needs a value" ;;
     \?) die "unknown flag -$OPTARG" ;;
@@ -55,6 +61,15 @@ if printf '%s' "$ORIGIN_URL" | grep -Eq '[:/]team-plain/'; then
 else
   [ -z "$LINEAR_ID" ] || die "no Linear issues outside team-plain repos (origin: ${ORIGIN_URL:-none}); drop -l"
   [ -z "$ERROR_URL" ] || die "-e needs a Linear issue, which only team-plain repos use"
+  [ -z "$PLAIN_URL" ] || die "-p needs a Linear issue, which only team-plain repos use"
+fi
+if [ -n "$PLAIN_URL" ]; then
+  printf '%s' "$PLAIN_URL" | grep -Eq '^https://(app|beta)\.plain\.com/workspace/w_[A-Z0-9]+/thread/th_[A-Z0-9]+/?$' \
+    || die "-p must be a Plain thread url, got: $PLAIN_URL"
+fi
+if [ -n "$PLAIN_REF" ]; then
+  [ -n "$PLAIN_URL" ] || die "-r needs -p <plain thread url>"
+  printf '%s' "$PLAIN_REF" | grep -Eq '^T-[0-9]+$' || die "-r must look like T-37240, got: $PLAIN_REF"
 fi
 if [ -n "$ERROR_URL" ]; then
   printf '%s' "$ERROR_URL" | grep -Eq '^https://app\.datadoghq\.(eu|com)/error-tracking' \
@@ -197,6 +212,10 @@ BODY="${BODY:+${BODY}
 BODY="${BODY//__LINEAR_ID__/$LINEAR_ID}"
 BODY="${BODY//__LINEAR_URL__/$LINEAR_URL}"
 BODY="${BODY//__ERROR_URL__/$ERROR_URL}"
+if [ -n "$PLAIN_URL" ]; then
+  FIXES_LINE="${BODY%%$'\n'*}"
+  BODY="${FIXES_LINE}, [Plain ${PLAIN_REF:-thread}](${PLAIN_URL})${BODY#"$FIXES_LINE"}"
+fi
 
 gh pr create --draft --base "$BASE" --head "$BRANCH" --title "$TITLE" --body "$BODY"
 gh pr view "$BRANCH" --json url --jq '.url'

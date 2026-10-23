@@ -1,4 +1,5 @@
-import { basename, dirname, resolve } from 'node:path';
+import { readdirSync, readFileSync } from 'node:fs';
+import { basename, dirname, join, resolve } from 'node:path';
 import { extractDiffs } from './diffs';
 import type { RunMode } from './types';
 
@@ -55,7 +56,7 @@ export function runIdFor(url: string | undefined, contextDir: string, number?: n
   return `prc-${basename(dirname(dirname(dirname(dirname(resolved)))))}-${pr}`;
 }
 
-function positionsOf(item: TallyItem) {
+export function positionsOf(item: TallyItem) {
   return SEATS.filter((seat) => item[seat] !== undefined).map((seat) => {
     const position = item[seat] as SeatPosition;
     return {
@@ -70,7 +71,49 @@ function positionsOf(item: TallyItem) {
   });
 }
 
-export function findingTodo(item: TallyItem, patch: string, prUrl?: string) {
+const SAME_ROOT = /[Ss]ame root(?: cause)?(?: as)?\s+([A-Z]+\d+(?:(?:,\s*and\s+|,\s*|\s+and\s+)[A-Z]+\d+)*)/g;
+const ITEM_ID = /[A-Z]+\d+/g;
+
+function referencedIds(item: TallyItem): string[] {
+  return SEATS.flatMap((seat) => {
+    const reason = item[seat]?.reason ?? '';
+    return [...reason.matchAll(SAME_ROOT)].flatMap((match) => match[1]?.match(ITEM_ID) ?? []);
+  });
+}
+
+const SEAT_ORDER = 'CXG';
+
+function bySeatThenNumber(a: string, b: string): number {
+  const seat = SEAT_ORDER.indexOf(a.charAt(0)) - SEAT_ORDER.indexOf(b.charAt(0));
+  return seat !== 0 ? seat : a.localeCompare(b, undefined, { numeric: true });
+}
+
+export function alsoRaisedAs(tally: TallyItem[]): Map<string, string[]> {
+  const known = new Set(tally.map((item) => item.id));
+  const links = new Map<string, Set<string>>(tally.map((item) => [item.id, new Set<string>()]));
+  tally.forEach((item) => {
+    referencedIds(item)
+      .filter((id) => id !== item.id && known.has(id))
+      .forEach((id) => {
+        links.get(item.id)?.add(id);
+        links.get(id)?.add(item.id);
+      });
+  });
+  return new Map([...links].map(([id, others]) => [id, [...others].sort(bySeatThenNumber)]));
+}
+
+export function latestTally(contextDir: string): TallyItem[] {
+  const debateDir = join(contextDir, 'debate');
+  const rounds = readdirSync(debateDir)
+    .map((file) => /^tally-(\d+)\.json$/.exec(file))
+    .filter((match) => match !== null)
+    .map((match) => Number(match[1]))
+    .sort((a, b) => b - a);
+  if (rounds.length === 0) throw new Error(`no tally in ${debateDir}`);
+  return JSON.parse(readFileSync(join(debateDir, `tally-${rounds[0]}.json`), 'utf8'));
+}
+
+export function findingTodo(item: TallyItem, patch: string, prUrl?: string, raisedAs: string[] = []) {
   return {
     id: item.id,
     kind: 'finding',
@@ -78,8 +121,9 @@ export function findingTodo(item: TallyItem, patch: string, prUrl?: string) {
     title: item.title,
     question: `${item.failure}\n\nFix: ${item.fix}`,
     severity: consensusSeverity(item),
+    ...(raisedAs.length > 0 ? { alsoRaisedAs: raisedAs } : {}),
     ...(item.evidence !== undefined && item.evidence !== '' ? { verification: stripRefs(item.evidence) } : {}),
-    positions: item.status === 'contested' ? positionsOf(item) : [],
+    positions: positionsOf(item),
     tradeoffs: [],
     caveats: item.confidence === 'low' ? ['Raised with low confidence'] : [],
     evidence: [{ ref: stripRefs(item.location) }],
@@ -93,7 +137,8 @@ export function findingTodo(item: TallyItem, patch: string, prUrl?: string) {
 export function findingTodos(tally: TallyItem[], patch: string, prUrl?: string) {
   const contested = tally.filter((item) => item.status === 'contested');
   const agreed = tally.filter((item) => item.status === 'agreed');
-  return [...contested, ...agreed].map((item) => findingTodo(item, patch, prUrl));
+  const raised = alsoRaisedAs(tally);
+  return [...contested, ...agreed].map((item) => findingTodo(item, patch, prUrl, raised.get(item.id)));
 }
 
 export function modeFor(authorLogin: string | undefined, thinhLogin: string | null): RunMode {

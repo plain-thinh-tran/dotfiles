@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
-import { findingTodos, modeFor, resolveLogin, runIdFor, type TallyItem } from '../src/prc';
+import { findingTodos, latestTally, modeFor, resolveLogin, runIdFor } from '../src/prc';
 
 const contextDir = process.argv[2];
 const summaryArg = process.argv[3];
@@ -10,18 +10,11 @@ if (contextDir === undefined) {
   process.exit(1);
 }
 
-function latestTally(dir: string): TallyItem[] {
-  const rounds = readdirSync(join(dir, 'debate'))
-    .map((f) => /^tally-(\d+)\.json$/.exec(f))
-    .filter((m) => m !== null)
-    .map((m) => Number(m[1]))
-    .sort((a, b) => b - a);
-  if (rounds.length === 0) throw new Error(`no tally in ${dir}/debate`);
-  return JSON.parse(readFileSync(join(dir, 'debate', `tally-${rounds[0]}.json`), 'utf8'));
-}
-
 const patchPath = join(contextDir, 'diff.patch');
 const patch = existsSync(patchPath) ? readFileSync(patchPath, 'utf8') : '';
+
+const overviewPath = join(contextDir, 'overview.md');
+const overview = existsSync(overviewPath) ? readFileSync(overviewPath, 'utf8').trim() : '';
 
 const tally = latestTally(contextDir);
 const metaPath = join(contextDir, 'meta.json');
@@ -49,10 +42,12 @@ console.log(
     {
       runId: runIdFor(meta.url, contextDir, pr),
       skill: 'prod-ready-check',
+      contextDir: resolve(contextDir),
       mode,
       ...(meta.url !== undefined ? { pr: { number: pr, url: meta.url, author: authorLogin ?? '' } } : {}),
       title: `PR #${pr} ${meta.title ?? ''}`.trim(),
       summary: summaryArg ?? meta.title ?? '',
+      ...(overview !== '' ? { overview } : {}),
       agents: [
         { id: 'claude', name: 'Claude', role: 'orchestrator', harness: 'claude', model: 'claude-opus-5-5' },
         { id: 'codex', name: 'GPT-6 Sol', role: 'reviewer', harness: 'codex', model: process.env.CODEX_MODEL ?? 'gpt-6-sol' },

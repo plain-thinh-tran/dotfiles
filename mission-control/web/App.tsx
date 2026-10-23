@@ -1,14 +1,15 @@
+import { GROUP_LABEL, threadGroup } from '../src/threadGroups';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import type { CSSProperties, ReactNode } from 'react';
+import type { CSSProperties, MouseEvent, ReactNode } from 'react';
 import { isSplit } from '../src/council';
 import {
-  QUESTION_PATIENCE_MS,
   chosenLabel,
   deliverableQuestionCount,
   isAwaitingPickup,
   isReadyToSubmit,
   latestThinhMessage,
   optionsFor,
+  questionPatienceMs,
 } from '../src/prompt';
 import type { Agent, LiveState, Option, Run, RunMode, RunPr, Thread, Todo, TodoState } from '../src/types';
 import { Avatar, AvatarStack } from './Avatar';
@@ -23,6 +24,8 @@ import { Overview } from './Overview';
 import { Palette } from './Palette';
 import type { PaletteItem } from './Palette';
 import { Snackbar } from './Snackbar';
+import { syncPrompt } from '../src/syncPrompt';
+import { ThreadMenu } from './ThreadMenu';
 import type { SnackState } from './Snackbar';
 import { Dock, TeamPane } from './Team';
 
@@ -496,33 +499,82 @@ function RestoreIcon() {
   );
 }
 
-function ThreadRow(props: { thread: Thread; selected: boolean; unseen: number; flashing: boolean; onSelect: () => void; onArchive: () => void }) {
+function RenameInput({ value, onSave, onCancel }: { value: string; onSave: (name: string | null) => void; onCancel: () => void }) {
+  const finished = useRef(false);
+  function finish(save: boolean, text: string): void {
+    if (finished.current) return;
+    finished.current = true;
+    if (save) onSave(text.trim() === '' ? null : text.trim());
+    else onCancel();
+  }
+  return (
+    <input
+      className="thread-rename"
+      autoFocus
+      defaultValue={value}
+      onFocus={(event) => event.currentTarget.select()}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter') finish(true, event.currentTarget.value);
+        if (event.key === 'Escape') finish(false, '');
+      }}
+      onBlur={(event) => finish(true, event.currentTarget.value)}
+    />
+  );
+}
+
+function ThreadRow(props: {
+  thread: Thread;
+  selected: boolean;
+  unseen: number;
+  flashing: boolean;
+  renaming: boolean;
+  onSelect: () => void;
+  onArchive: () => void;
+  onContextMenu: (event: MouseEvent) => void;
+  onRename: (name: string | null) => void;
+  onCancelRename: () => void;
+}) {
   const { thread, selected } = props;
   const { session } = thread;
   const branch = session.branch === '' ? 'detached' : session.branch;
   const action = thread.archived ? 'Unarchive' : 'Archive';
-  return (
-    <div className="thread-item" data-archived={thread.archived} data-flash={props.flashing}>
-      <button
-        className="thread-row"
-        data-selected={selected}
-        title={`${session.repo} · ${branch} · ${session.workspaceName}`}
-        onClick={props.onSelect}
-      >
-        <div className="thread-top">
-          <LiveMark state={thread.live} />
-          <span className="thread-mode" data-mode={thread.mode} title={MODE_TITLE[thread.mode]}>
-            <ModeIcon mode={thread.mode} />
-          </span>
+  const body = (
+    <>
+      <div className="thread-top">
+        <LiveMark state={thread.live} />
+        <span className="thread-mode" data-mode={thread.mode} title={MODE_TITLE[thread.mode]}>
+          <ModeIcon mode={thread.mode} />
+        </span>
+        {props.renaming ? (
+          <RenameInput value={thread.displayName} onSave={props.onRename} onCancel={props.onCancelRename} />
+        ) : (
           <span className="thread-name">{thread.displayName}</span>
-          {props.unseen > 0 ? <span className="newpill">{props.unseen} new</span> : null}
-          {thread.answeredCount > 0 ? <span className="badge badge-ready">{thread.answeredCount} ready</span> : null}
-          {thread.openCount > 0 ? <span className="badge">{thread.openCount}</span> : null}
+        )}
+        {props.unseen > 0 ? <span className="newpill">{props.unseen} new</span> : null}
+        {thread.answeredCount > 0 ? <span className="badge badge-ready">{thread.answeredCount} ready</span> : null}
+        {thread.openCount > 0 ? <span className="badge">{thread.openCount}</span> : null}
+      </div>
+      <div className="thread-desc">
+        {thread.live === 'working' && thread.step !== null ? <StepLine key={thread.step.text} text={thread.step.text} /> : thread.description}
+      </div>
+    </>
+  );
+  return (
+    <div className="thread-item" data-archived={thread.archived} data-flash={props.flashing} onContextMenu={props.onContextMenu}>
+      {props.renaming ? (
+        <div className="thread-row" data-selected={selected}>
+          {body}
         </div>
-        <div className="thread-desc">
-          {thread.live === 'working' && thread.step !== null ? <StepLine key={thread.step.text} text={thread.step.text} /> : thread.description}
-        </div>
-      </button>
+      ) : (
+        <button
+          className="thread-row"
+          data-selected={selected}
+          title={`${session.repo} · ${branch} · ${session.workspaceName}`}
+          onClick={props.onSelect}
+        >
+          {body}
+        </button>
+      )}
       <button className="icon-btn row-action" title={action} aria-label={action} onClick={props.onArchive}>
         {thread.archived ? <RestoreIcon /> : <ArchiveIcon />}
       </button>
@@ -540,11 +592,24 @@ function ThreadsPane(props: {
   onToggleArchived: () => void;
   onToggleTeam: () => void;
   onCloseTeam: () => void;
+  renamingId: string | null;
   onSelect: (sessionId: string) => void;
   onArchive: (thread: Thread) => void;
+  onStartRename: (thread: Thread) => void;
+  onRename: (thread: Thread, name: string | null) => void;
+  onCancelRename: () => void;
+  onCopyPrompt: (thread: Thread) => void;
+  onSync: (thread: Thread) => void;
 }) {
+  const [menu, setMenu] = useState<{ thread: Thread; x: number; y: number } | null>(null);
   const online = props.threads.some((thread) => thread.live === 'working' || thread.live === 'waiting_on_you');
-  const firstArchived = props.threads.findIndex((thread) => thread.archived);
+  const [idleOpen, setIdleOpen] = useState(() => localStorage.getItem('mc-idle-open') !== '0');
+  function toggleIdle(): void {
+    setIdleOpen((open) => {
+      localStorage.setItem('mc-idle-open', open ? '0' : '1');
+      return !open;
+    });
+  }
   return (
     <aside className="pane threads">
       <header className="pane-header">
@@ -552,20 +617,57 @@ function ThreadsPane(props: {
       </header>
       <div className="pane-scroll">
         {props.threads.length === 0 ? <div className="empty">No sessions need you.</div> : null}
-        {props.threads.map((thread, index) => (
+        {props.threads.map((thread, index) => {
+          const group = threadGroup(thread);
+          const startsGroup = index === 0 || threadGroup(props.threads[index - 1] as Thread) !== group;
+          const count = props.threads.filter((t) => threadGroup(t) === group).length;
+          const hidden = group === 'idle' && !idleOpen;
+          return (
           <div key={thread.sessionId}>
-            {index === firstArchived ? <div className="section-label">Archived</div> : null}
+            {startsGroup ? (
+              group === 'idle' ? (
+                <button className="section-label group-label group-toggle" aria-expanded={idleOpen} onClick={toggleIdle}>
+                  {GROUP_LABEL[group]} · {count} <span className="chevron">{idleOpen ? '▾' : '▸'}</span>
+                </button>
+              ) : (
+                <div className="section-label group-label" data-group={group}>
+                  {GROUP_LABEL[group]} · {count}
+                </div>
+              )
+            ) : null}
+            {hidden ? null : (
             <ThreadRow
               thread={thread}
               selected={thread.sessionId === props.selectedId}
               unseen={unseenCount(thread, props.selectedId)}
               flashing={props.flashing.has(thread.sessionId)}
+              renaming={props.renamingId === thread.sessionId}
               onSelect={() => props.onSelect(thread.sessionId)}
               onArchive={() => props.onArchive(thread)}
+              onContextMenu={(event) => {
+                event.preventDefault();
+                setMenu({ thread, x: event.clientX, y: event.clientY });
+              }}
+              onRename={(name) => props.onRename(thread, name)}
+              onCancelRename={props.onCancelRename}
             />
+            )}
           </div>
-        ))}
+          );
+        })}
       </div>
+      {menu !== null ? (
+        <ThreadMenu
+          x={menu.x}
+          y={menu.y}
+          archived={menu.thread.archived}
+          onRename={() => props.onStartRename(menu.thread)}
+          onSync={() => props.onSync(menu.thread)}
+          onCopyPrompt={() => props.onCopyPrompt(menu.thread)}
+          onArchive={() => props.onArchive(menu.thread)}
+          onClose={() => setMenu(null)}
+        />
+      ) : null}
       {props.teamOpen ? <TeamPane thread={props.threads.find((t) => t.sessionId === props.selectedId) ?? null} now={props.now} onClose={props.onCloseTeam} /> : null}
       <Dock
         showArchived={props.showArchived}
@@ -895,6 +997,7 @@ type DetailProps = {
   mode: RunMode;
   pr: RunPr | null;
   instantAsk: boolean;
+  dead: boolean;
   busy: Busy | null;
   entry: Entry;
   agents: Agent[];
@@ -903,6 +1006,7 @@ type DetailProps = {
   onAccept: () => void;
   onSave: () => void;
   onAsk: () => void;
+  onRetry: () => void;
   onReopen: () => void;
   onCopy: (text: string) => void;
 };
@@ -1011,7 +1115,7 @@ function DetailPane(props: DetailProps) {
           <Lifecycle state={todo.state} />
         </header>
         {todo.question !== '' ? <QuestionText text={todo.question} /> : null}
-        {todo.conversation !== undefined && todo.conversation.length > 0 ? <Conversation messages={todo.conversation} agents={agents} instantAsk={props.instantAsk} /> : null}
+        {todo.conversation !== undefined && todo.conversation.length > 0 ? <Conversation messages={todo.conversation} agents={agents} instantAsk={props.instantAsk} dead={props.dead} onRetry={props.onRetry} /> : null}
         {options.length > 0 ? (
           <section>
             <h3>Options</h3>
@@ -1083,6 +1187,7 @@ export function App() {
   const [showArchived, setShowArchived] = useState(false);
   const [view, setView] = useState<View>('overview');
   const [teamOpen, setTeamOpen] = useState(false);
+  const [renamingId, setRenamingId] = useState<string | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>('open');
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
@@ -1105,12 +1210,12 @@ export function App() {
   const thread = threads.find((t) => t.sessionId === sessionId) ?? threads[0] ?? null;
   const flashing = useNewTodos(threads, thread?.sessionId ?? null);
   const [, setClock] = useState(0);
-  const questionCount = thread === null ? 0 : deliverableQuestionCount(thread.runs, Date.now());
+  const questionCount = thread === null || thread.live === 'dead' ? 0 : deliverableQuestionCount(thread.runs, Date.now());
   useEffect(() => {
     const waits = threads
       .flatMap((t) => t.runs.flatMap((run) => run.todos.map(latestThinhMessage)))
-      .filter((message) => message?.pending === true && message.submittedAt === undefined && message.fallbackFailed !== true)
-      .map((message) => new Date((message as { at: string }).at).getTime() + QUESTION_PATIENCE_MS - Date.now())
+      .flatMap((message) => (message?.pending === true && message.submittedAt === undefined && message.fallbackFailed !== true ? [message] : []))
+      .map((message) => new Date(message.at).getTime() + questionPatienceMs(message) - Date.now())
       .filter((remaining) => remaining > 0);
     if (waits.length === 0) return;
     const timer = setTimeout(() => setClock((tick) => tick + 1), Math.min(...waits) + 50);
@@ -1214,6 +1319,10 @@ export function App() {
     if (entry !== null) await perform(`${todoPath(entry)}/ask`, { text });
   }
 
+  async function retryAsk(): Promise<void> {
+    if (entry !== null) await perform(`${todoPath(entry)}/retry`);
+  }
+
   async function reopenEntry(target: Entry): Promise<string | null> {
     setDrafts((prev) => ({ ...prev, [todoKey(target)]: initialDraft({ ...target.todo, answer: null }) }));
     await perform(`${todoPath(target)}/reopen`);
@@ -1273,11 +1382,33 @@ export function App() {
     );
   }
 
-  async function copyPrompt(): Promise<void> {
-    if (thread === null) return;
-    const response = await fetch(`/api/threads/${encodeURIComponent(thread.sessionId)}/prompt`);
+  async function copyPrompt(target: Thread | null = thread): Promise<void> {
+    if (target === null) return;
+    const response = await fetch(`/api/threads/${encodeURIComponent(target.sessionId)}/prompt`);
     const { text } = (await response.json()) as { text: string };
     await copyText(text, 'Prompt copied');
+  }
+
+  async function syncFromChat(target: Thread | null = thread): Promise<void> {
+    if (target === null) return;
+    const id = encodeURIComponent(target.sessionId);
+    const response = await postJson(`/api/threads/${id}/sync`);
+    if (!response.ok) {
+      flash('Request failed');
+      return;
+    }
+    const { mod } = (await response.json()) as { mod: boolean };
+    if (mod) {
+      flash('Sync requested');
+      return;
+    }
+    await postJson(`/api/sessions/${id}/sync/ack`);
+    await copyText(syncPrompt(target.runs.map((run) => run.runId)), 'Sync prompt copied, paste it into the Conductor chat');
+  }
+
+  async function renameThread(target: Thread, name: string | null): Promise<void> {
+    setRenamingId(null);
+    await perform(`/api/threads/${encodeURIComponent(target.sessionId)}/name`, { name });
   }
 
   function selectThread(id: string): void {
@@ -1323,7 +1454,7 @@ export function App() {
   }
 
   function renderMiddle(active: Thread): ReactNode {
-    if (!decisionActive) return <Overview thread={active} now={now} onTab={setTab} onOpenTodo={openTodo} />;
+    if (!decisionActive) return <Overview thread={active} now={now} onTab={setTab} onOpenTodo={openTodo} onSync={() => void syncFromChat(active)} />;
     if (entry.todo.kind === 'finding') {
       return (
         <FindingPane
@@ -1333,6 +1464,7 @@ export function App() {
           todo={entry.todo}
           agents={active.agents}
           instantAsk={active.instantAsk}
+          dead={active.live === 'dead'}
           draft={draft.text}
           busy={busy !== null}
           onDraft={(text) => patchDraft({ text })}
@@ -1341,6 +1473,7 @@ export function App() {
           onPost={() => void postComment()}
           onReopen={() => void reopen()}
           onAsk={(text) => void askFinding(text)}
+          onRetry={() => void retryAsk()}
           onCopy={(text) => void copyText(text, 'Copied')}
         />
       );
@@ -1352,11 +1485,13 @@ export function App() {
         entry={entry}
         agents={active.agents}
         instantAsk={active.instantAsk}
+        dead={active.live === 'dead'}
         draft={draft}
         onDraft={patchDraft}
         onAccept={() => void accept()}
         onSave={() => void save()}
         onAsk={() => void ask()}
+        onRetry={() => void retryAsk()}
         onReopen={() => void reopen()}
         onCopy={(text) => void copyText(text, 'Copied')}
         busy={busy}
@@ -1390,6 +1525,8 @@ export function App() {
         shortcut: 'e',
         run: () => void toggleArchive(thread),
       });
+      actions.push({ id: 'rename', title: 'Rename thread', subtitle: thread.displayName, shortcut: 'r', run: () => setRenamingId(thread.sessionId) });
+      actions.push({ id: 'sync', title: 'Sync from chat', subtitle: thread.displayName, run: () => void syncFromChat() });
       actions.push({ id: 'prompt', title: 'Copy prompt', subtitle: thread.displayName, run: () => void copyPrompt() });
     }
     actions.push({
@@ -1435,6 +1572,10 @@ export function App() {
     const editable = decisionActive && entry !== null && isEditable(entry.todo) && entry.todo.kind !== 'finding';
     if (event.key === 'o') setView('overview');
     else if (event.key === 'e' && thread !== null) void toggleArchive(thread);
+    else if (event.key === 'r' && thread !== null) {
+      event.preventDefault();
+      setRenamingId(thread.sessionId);
+    }
     else if (event.key === 'j') moveTodo(1);
     else if (event.key === 'k') moveTodo(-1);
     else if (event.key === '[') moveThread(-1);
@@ -1468,6 +1609,12 @@ export function App() {
         onCloseTeam={() => setTeamOpen(false)}
         onSelect={selectThread}
         onArchive={(target) => void toggleArchive(target)}
+        renamingId={renamingId}
+        onStartRename={(target) => setRenamingId(target.sessionId)}
+        onRename={(target, name) => void renameThread(target, name)}
+        onCancelRename={() => setRenamingId(null)}
+        onCopyPrompt={(target) => void copyPrompt(target)}
+        onSync={(target) => void syncFromChat(target)}
       />
       {thread === null ? (
         <main className="pane detail">

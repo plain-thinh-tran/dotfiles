@@ -74,6 +74,7 @@ export type Todo = {
   doneAt?: string;
   diffs?: { path: string; patch: string }[];
   severity?: string;
+  alsoRaisedAs?: string[];
   verification?: string;
   draftComment?: string;
   suggestedQuestions?: string[];
@@ -83,6 +84,7 @@ export type Todo = {
     at: string;
     pending?: boolean;
     fallbackFailed?: boolean;
+    answerer?: 'session' | 'notes';
     submittedAt?: string;
     deliveredAt?: string;
   }[];
@@ -107,8 +109,10 @@ export type Run = {
   skill: string;
   title: string;
   summary?: string;
+  overview?: string;
   mode?: RunMode;
   pr?: RunPr;
+  contextDir?: string;
   status: 'active' | 'done';
   createdAt: string;
   updatedAt: string;
@@ -128,8 +132,10 @@ export type Thread = {
   mode: RunMode;
   pr: RunPr | null;
   displayName: string;
+  syncRequestedAt: string | null;
   description: string;
   summary: string;
+  overview: string;
   live: LiveState;
   step: { text: string; at: string; agent: string | null } | null;
   steps: { text: string; at: string; agent: string | null }[];

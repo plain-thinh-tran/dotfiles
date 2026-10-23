@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import type { FormEvent } from 'react';
 import type { Agent, Run, RunMode, RunPr, Todo } from '../src/types';
-import { Avatar } from './Avatar';
+import { Consensus } from './Consensus';
 import { Conversation } from './Conversation';
 import { Diff } from './Diff';
 import { History } from './History';
@@ -14,6 +14,7 @@ type FindingProps = {
   todo: Todo;
   agents: Agent[];
   instantAsk: boolean;
+  dead: boolean;
   draft: string;
   busy: boolean;
   onDraft: (text: string) => void;
@@ -22,15 +23,12 @@ type FindingProps = {
   onPost: () => void;
   onReopen: () => void;
   onAsk: (text: string) => void;
+  onRetry: () => void;
   onCopy: (text: string) => void;
 };
 
 function isUrl(text: string | null): text is string {
   return text !== null && /^https?:\/\//.test(text);
-}
-
-function agentFor(agents: Agent[], id: string): Agent {
-  return agents.find((agent) => agent.id === id) ?? { id, name: id, role: 'council', harness: 'other', model: '' };
 }
 
 function FindingBar(props: FindingProps) {
@@ -198,26 +196,13 @@ export function FindingPane(props: FindingProps) {
           ) : null}
           {todo.positions.length > 0 ? (
             <section>
-              <h3>What the reviewers said</h3>
-              <div className="said">
-                {todo.positions.map((position) => {
-                  const agent = agentFor(agents, position.agent);
-                  return (
-                    <div key={position.agent} className="said-row">
-                      <Avatar agent={agent} size={20} />
-                      <div>
-                        <b>{agent.name}</b> <span className="muted">{position.summary}</span>
-                        {position.reason !== undefined && position.reason !== '' ? <p className="muted">{position.reason}</p> : null}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
+              <h3>Reviewers</h3>
+              <Consensus key={todo.id} positions={todo.positions} alsoRaisedAs={todo.alsoRaisedAs ?? []} agents={agents} />
             </section>
           ) : null}
           <section>
             <h3>Questions</h3>
-            {conversation.length > 0 ? <Conversation messages={conversation} agents={agents} instantAsk={props.instantAsk} /> : null}
+            {conversation.length > 0 ? <Conversation messages={conversation} agents={agents} instantAsk={props.instantAsk} dead={props.dead} onRetry={props.onRetry} /> : null}
             <Asking todo={todo} onAsk={props.onAsk} />
           </section>
           <section>

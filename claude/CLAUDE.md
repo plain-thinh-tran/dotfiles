@@ -71,6 +71,7 @@ Current files:
 - `~/.claude/memory/propagation.md` — correlationId extraction paths and rules
 - `~/.claude/memory/vendors.md` — Third-party vendors and integrations
 - `~/.claude/memory/mistakes.md` — Mistakes and learnings from past sessions
+- `~/.claude/memory/ci-deploy.md` — Bar and banned ideas for deploy/CI time work
 
 **Workflow:**
 1. At the start of a session, read relevant memory files from `~/.claude/memory/` based on the task

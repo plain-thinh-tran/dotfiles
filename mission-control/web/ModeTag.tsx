@@ -45,8 +45,17 @@ export function ModeIcon({ mode }: { mode: RunMode }) {
 export function ModeTag({ mode, pr }: { mode: RunMode; pr: RunPr | null }) {
   return (
     <span className="mode-tag" data-mode={mode} title={MODE_TITLE[mode]}>
-      <ModeIcon mode={mode} />
-      {MODE_WORD[mode]}
+      {mode !== 'build' && pr !== null ? (
+        <a className="mode-link" href={`${pr.url}/files`} target="_blank" rel="noreferrer" title="Open the PR review on GitHub">
+          <ModeIcon mode={mode} />
+          {MODE_WORD[mode]}
+        </a>
+      ) : (
+        <>
+          <ModeIcon mode={mode} />
+          {MODE_WORD[mode]}
+        </>
+      )}
       {mode !== 'build' && pr !== null ? (
         <a className="mode-pr" href={pr.url} target="_blank" rel="noreferrer">
           #{pr.number}

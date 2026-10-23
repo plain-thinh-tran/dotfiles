@@ -1,8 +1,9 @@
+import { syncPrompt } from './syncPrompt';
 import { watch } from 'node:fs';
 import index from '../web/index.html';
 import { avatarPath, downloadMissingAvatars, isAvatarId } from './avatarFiles';
-import { answerWithFallback } from './fallbackAsk';
-import { activeWaits, computeLiveInfo } from './live';
+import { answerQuestion } from './fallbackAsk';
+import { activeWaits, computeLiveInfo, hasConductorSession } from './live';
 import {
   isAwaitingPickup,
   isDeliverableQuestion,
@@ -17,6 +18,7 @@ import {
   addQuestion,
   addReply,
   buildThreads,
+  markAnswerer,
   markFallbackFailed,
   patchLatestThinh,
   withoutSubmission,
@@ -26,13 +28,18 @@ import {
   listRuns,
   pruneRuns,
   readArchived,
+  readNames,
+  setName,
   readSteps,
+  readSyncs,
   recentlyPolled,
+  restartQuestion,
   ensureStepsDir,
   stepsDir,
   readRun,
   runsDir,
   setArchived,
+  setSync,
   withRunLock,
   writeRun,
 } from './store';
@@ -42,6 +49,7 @@ const PORT = Number(process.env.PORT ?? 4747);
 const LIVE_INTERVAL_MS = 3000;
 const PING_INTERVAL_MS = 15000;
 const PRESENCE_TTL_MS = 30000;
+const MAX_NAME_LENGTH = 120;
 
 type AnswerBody = { optionId: string | null; text: string; deferred: boolean; question?: boolean };
 type TodoRequest = Request & { params: { runId: string; todoId: string } };
@@ -54,13 +62,14 @@ let liveStates = new Map<string, LiveInfo>();
 let lastFocusedAt = 0;
 const lastModPollAt = new Map<string, number>();
 const fallbackRunning = new Set<string>();
+const syncRequests = readSyncs();
 
 function wantsArchived(req: Request): boolean {
   return new URL(req.url).searchParams.get('archived') === '1';
 }
 
 function currentThreads(showArchived: boolean) {
-  return buildThreads(listRuns(), liveStates, readArchived(), showArchived, readSteps(), lastModPollAt);
+  return buildThreads(listRuns(), liveStates, readArchived(), showArchived, readSteps(), lastModPollAt, readNames(), syncRequests);
 }
 
 function notFound(message: string): Response {
@@ -281,7 +290,20 @@ async function answerAsFallback(runId: string, todoId: string): Promise<void> {
   }
   fallbackRunning.add(key);
   try {
-    const answer = await answerWithFallback(question, conductorSessionId, workspacePath);
+    const todo = run.todos.find((candidate) => candidate.id === todoId);
+    const answer = await answerQuestion(
+      {
+        question,
+        kind: todo?.kind ?? 'decision',
+        runTitle: run.title,
+        sessionId: conductorSessionId,
+        hasSession: hasConductorSession(conductorSessionId),
+        workspacePath,
+        contextDir: run.contextDir,
+        prNumber: run.pr?.number ?? run.session.pr?.number,
+      },
+      (stage) => markAnswerer(runId, todoId, question.text, stage),
+    );
     const current = readRun(runId)?.todos.find((todo) => todo.id === todoId);
     if (answer === null) {
       await markFallbackFailed(runId, todoId, question.text);
@@ -295,6 +317,18 @@ async function answerAsFallback(runId: string, todoId: string): Promise<void> {
   if (latest !== undefined && pendingQuestion(latest) !== null && pendingQuestion(latest) !== question.text) {
     void answerAsFallback(runId, todoId);
   }
+}
+
+async function retryAsk(req: TodoRequest): Promise<Response> {
+  const { runId, todoId } = req.params;
+  const todo = readRun(runId)?.todos.find((candidate) => candidate.id === todoId);
+  if (todo === undefined) return notFound(`Todo ${runId}/${todoId} not found`);
+  const latest = latestThinhMessage(todo);
+  if (latest?.pending !== true || latest.submittedAt !== undefined) return conflict('No unanswered question');
+  if (fallbackRunning.has(`${runId}/${todoId}`)) return conflict('Already being answered');
+  await restartQuestion(runId, todoId);
+  void answerAsFallback(runId, todoId);
+  return Response.json({ ok: true });
 }
 
 async function replyTodo(req: TodoRequest): Promise<Response> {
@@ -336,7 +370,12 @@ async function collectWork(sessionId: string) {
       waitActive: waits.has(run.runId),
     }))
     .filter((entry) => entry.todoIds.length > 0);
-  return { questions: runs.flatMap(questionsOf), submitted };
+  const requestedAt = syncRequests.get(sessionId);
+  return {
+    questions: runs.flatMap(questionsOf),
+    submitted,
+    sync: requestedAt === undefined ? null : { requestedAt, prompt: syncPrompt(runs.map((run) => run.runId)) },
+  };
 }
 
 async function sessionWork(req: Request & { params: { sessionId: string } }, timeout: (req: Request, seconds: number) => void): Promise<Response> {
@@ -345,7 +384,7 @@ async function sessionWork(req: Request & { params: { sessionId: string } }, tim
   if (waitSeconds > 0) timeout(req, waitSeconds + 10);
   lastModPollAt.set(req.params.sessionId, Date.now());
   let work = await collectWork(req.params.sessionId);
-  while (work.questions.length === 0 && work.submitted.every((s) => s.waitActive) && Date.now() < deadline) {
+  while (work.questions.length === 0 && work.sync === null && work.submitted.every((s) => s.waitActive) && Date.now() < deadline) {
     await nextChange(deadline - Date.now());
     work = await collectWork(req.params.sessionId);
   }
@@ -367,6 +406,35 @@ function getPresence(): Response {
 
 function threadExists(sessionId: string): boolean {
   return groupRunsBySession(listRuns()).has(sessionId) || runningSessionIds().includes(sessionId);
+}
+
+async function renameThread(req: ThreadRequest): Promise<Response> {
+  const body = await readJson(req);
+  const name = typeof body === 'object' && body !== null ? (body as Record<string, unknown>).name : undefined;
+  if (name !== null && typeof name !== 'string') return Response.json({ error: 'Invalid name body' }, { status: 400 });
+  const { sessionId } = req.params;
+  if (!threadExists(sessionId)) return notFound('Thread not found');
+  await setName(sessionId, name === null ? null : name.slice(0, MAX_NAME_LENGTH));
+  broadcast();
+  return Response.json({ ok: true });
+}
+
+async function requestSync(req: ThreadRequest): Promise<Response> {
+  const { sessionId } = req.params;
+  if (!threadExists(sessionId)) return notFound('Thread not found');
+  const requestedAt = new Date().toISOString();
+  syncRequests.set(sessionId, requestedAt);
+  await setSync(sessionId, requestedAt);
+  broadcast();
+  return Response.json({ ok: true, requestedAt, mod: recentlyPolled(lastModPollAt.get(sessionId), Date.now()) });
+}
+
+async function ackSync(req: ThreadRequest): Promise<Response> {
+  const { sessionId } = req.params;
+  syncRequests.delete(sessionId);
+  await setSync(sessionId, null);
+  broadcast();
+  return Response.json({ ok: true });
 }
 
 async function archiveThread(req: ThreadRequest, archived: boolean): Promise<Response> {
@@ -485,10 +553,14 @@ const server = Bun.serve({
     '/api/runs/:runId/todos/:todoId/reopen': { POST: (req: TodoRequest) => reopenTodo(req) },
     '/avatars/:file': { GET: (req: Request & { params: { file: string } }) => serveAvatar(req) },
     '/api/runs/:runId/todos/:todoId/ask': { POST: (req: TodoRequest) => askTodo(req) },
+    '/api/runs/:runId/todos/:todoId/retry': { POST: (req: TodoRequest) => retryAsk(req) },
     '/api/runs/:runId/todos/:todoId/reply': { POST: (req: TodoRequest) => replyTodo(req) },
     '/api/sessions/:sessionId/work': { GET: (req: Request & { params: { sessionId: string } }, srv) => sessionWork(req, (r, sec) => srv.timeout(r, sec)) },
     '/api/presence': { GET: () => getPresence(), POST: (req) => setPresence(req) },
     '/api/focus-conductor': { POST: () => focusConductor() },
+    '/api/threads/:sessionId/name': { POST: (req: ThreadRequest) => renameThread(req) },
+    '/api/threads/:sessionId/sync': { POST: (req: ThreadRequest) => requestSync(req) },
+    '/api/sessions/:sessionId/sync/ack': { POST: (req: ThreadRequest) => ackSync(req) },
     '/api/threads/:sessionId/archive': { POST: (req: ThreadRequest) => archiveThread(req, true) },
     '/api/threads/:sessionId/unarchive': { POST: (req: ThreadRequest) => archiveThread(req, false) },
     '/api/threads/:sessionId/unsubmit': { POST: (req: ThreadRequest) => unsubmitThread(req) },

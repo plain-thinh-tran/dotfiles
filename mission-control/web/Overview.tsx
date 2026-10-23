@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { ROLE_NAMES, avatarKindOf } from '../src/avatars';
 import { isAwaitingPickup, isReadyToSubmit } from '../src/prompt';
+import { isSyncing } from '../src/sync';
 import type { LiveState, Run, Thread, Todo } from '../src/types';
 import type { Tab } from './App';
 import { Avatar } from './Avatar';
@@ -242,8 +243,107 @@ function RunRow({ run, now, onOpenTodo }: { run: Run; now: number; onOpenTodo: (
   );
 }
 
-function OverviewHeader({ thread, now }: { thread: Thread; now: number }) {
+type OverviewBlock =
+  | { kind: 'pre'; lines: string[] }
+  | { kind: 'heading'; text: string }
+  | { kind: 'list'; items: string[] }
+  | { kind: 'paragraph'; lines: string[] };
+
+function parseOverview(text: string): OverviewBlock[] {
+  const lines = text.split('\n');
+  const blocks: OverviewBlock[] = [];
+  let index = 0;
+  while (index < lines.length) {
+    const line = lines[index] ?? '';
+    if (line.startsWith('```')) {
+      const inner: string[] = [];
+      index += 1;
+      while (index < lines.length && lines[index] !== '```') {
+        inner.push(lines[index] ?? '');
+        index += 1;
+      }
+      index += 1;
+      blocks.push({ kind: 'pre', lines: inner });
+    } else if (line.startsWith('## ') || line.startsWith('### ')) {
+      blocks.push({ kind: 'heading', text: line.replace(/^#+ /, '') });
+      index += 1;
+    } else if (line.startsWith('- ')) {
+      const items: string[] = [];
+      while (index < lines.length && (lines[index] ?? '').startsWith('- ')) {
+        items.push((lines[index] ?? '').slice(2));
+        index += 1;
+      }
+      blocks.push({ kind: 'list', items });
+    } else if (line.trim() === '') {
+      index += 1;
+    } else {
+      const paragraph: string[] = [];
+      while (index < lines.length) {
+        const next = lines[index] ?? '';
+        if (next.trim() === '' || next.startsWith('```') || next.startsWith('## ') || next.startsWith('### ') || next.startsWith('- ')) break;
+        paragraph.push(next);
+        index += 1;
+      }
+      blocks.push({ kind: 'paragraph', lines: paragraph });
+    }
+  }
+  return blocks;
+}
+
+function Inline({ text }: { text: string }) {
   return (
+    <>
+      {text.split(/(`[^`]+`|\*\*[^*]+\*\*)/).map((part, index) => {
+        if (part.length > 2 && part.startsWith('`') && part.endsWith('`')) return <code key={index}>{part.slice(1, -1)}</code>;
+        if (part.length > 4 && part.startsWith('**') && part.endsWith('**')) return <strong key={index}>{part.slice(2, -2)}</strong>;
+        return part;
+      })}
+    </>
+  );
+}
+
+function OverviewBody({ text }: { text: string }) {
+  return (
+    <>
+      {parseOverview(text).map((block, index) => {
+        if (block.kind === 'pre') {
+          return (
+            <pre key={index} className="overview-pre">
+              {block.lines.join('\n')}
+            </pre>
+          );
+        }
+        if (block.kind === 'heading') {
+          return (
+            <h4 key={index} className="overview-h">
+              <Inline text={block.text} />
+            </h4>
+          );
+        }
+        if (block.kind === 'list') {
+          return (
+            <ul key={index}>
+              {block.items.map((item, itemIndex) => (
+                <li key={itemIndex}>
+                  <Inline text={item} />
+                </li>
+              ))}
+            </ul>
+          );
+        }
+        return (
+          <p key={index}>
+            <Inline text={block.lines.join(' ')} />
+          </p>
+        );
+      })}
+    </>
+  );
+}
+
+function OverviewHeader({ thread, now, onSync }: { thread: Thread; now: number; onSync: () => void }) {
+  return (
+    <>
       <header className="overview-head">
           <div>
             <div className="title-row">
@@ -258,8 +358,19 @@ function OverviewHeader({ thread, now }: { thread: Thread; now: number }) {
             <span>{LIVE_TEXT[thread.live]}</span>
             <span className="muted">· updated {relativeTime(thread.updatedAt, now)}</span>
             {thread.live === 'working' && thread.step !== null ? <span className="muted overview-step">· Now: {thread.step.text}</span> : null}
+            {isSyncing(thread) ? <span className="muted">· Syncing…</span> : null}
+            <button className="link" onClick={onSync}>
+              Sync from chat
+            </button>
           </div>
       </header>
+      {thread.overview !== '' ? (
+        <section className="overview-pr">
+          <h3>What this PR is about</h3>
+          <OverviewBody text={thread.overview} />
+        </section>
+      ) : null}
+    </>
   );
 }
 
@@ -282,13 +393,13 @@ function AgentsSection({ thread }: { thread: Thread }) {
   );
 }
 
-function RunningOverview({ thread, now }: { thread: Thread; now: number }) {
+function RunningOverview({ thread, now, onSync }: { thread: Thread; now: number; onSync: () => void }) {
   const history = [...thread.steps].reverse().slice(0, MAX_HISTORY);
   const orchestrator = thread.agents.find((agent) => agent.role === 'orchestrator');
   return (
     <div className="detail-scroll">
       <div className="overview">
-        <OverviewHeader thread={thread} now={now} />
+        <OverviewHeader thread={thread} now={now} onSync={onSync} />
         <section className="running">
           {thread.step !== null ? <div className="running-now">Now: {thread.step.text}</div> : null}
           <p className="muted">No decisions yet. They will appear here when the agents need you.</p>
@@ -316,9 +427,9 @@ function RunningOverview({ thread, now }: { thread: Thread; now: number }) {
   );
 }
 
-export function Overview(props: { thread: Thread; now: number; onTab: (tab: Tab) => void; onOpenTodo: (key: string) => void }) {
-  const { thread, now, onTab } = props;
-  if (thread.runs.length === 0) return <RunningOverview thread={thread} now={now} />;
+export function Overview(props: { thread: Thread; now: number; onTab: (tab: Tab) => void; onOpenTodo: (key: string) => void; onSync: () => void }) {
+  const { thread, now, onTab, onSync } = props;
+  if (thread.runs.length === 0) return <RunningOverview thread={thread} now={now} onSync={props.onSync} />;
   const todos = thread.runs.flatMap((run) => run.todos);
   const findings = todos.filter((todo) => todo.kind === 'finding');
   const decisions = todos.filter((todo) => todo.kind !== 'finding');
@@ -329,7 +440,7 @@ export function Overview(props: { thread: Thread; now: number; onTab: (tab: Tab)
   return (
     <div className="detail-scroll">
       <div className="overview">
-        <OverviewHeader thread={thread} now={now} />
+        <OverviewHeader thread={thread} now={now} onSync={onSync} />
         {decisions.length > 0 ? (
           <section className="tiles">
             <Tile label="Needs you" count={count('open')} onClick={() => onTab('open')} />

@@ -80,6 +80,24 @@ async function ensureServer(): Promise<void> {
   }).unref();
 }
 
+async function restartServer(): Promise<number> {
+  const listener = Bun.spawnSync(['lsof', '-ti', `tcp:${serverPort()}`, '-sTCP:LISTEN']);
+  const pids = new TextDecoder()
+    .decode(listener.stdout)
+    .split('\n')
+    .map((line) => Number(line.trim()))
+    .filter((pid) => Number.isInteger(pid) && pid > 0);
+  pids.forEach((pid) => process.kill(pid));
+  await Bun.sleep(pids.length > 0 ? 800 : 0);
+  await ensureServer();
+  await Bun.sleep(1500);
+  const up = await fetch(`http://127.0.0.1:${serverPort()}/api/threads`, { signal: AbortSignal.timeout(SERVER_PROBE_MS) })
+    .then((res) => res.ok)
+    .catch(() => false);
+  console.log(up ? `Mission Control restarted on port ${serverPort()}` : 'Mission Control did not come back, see server.log');
+  return up ? 0 : 1;
+}
+
 function appleScriptString(text: string): string {
   return `"${text.replaceAll('\\', '\\\\').replaceAll('"', '\\"')}"`;
 }
@@ -313,6 +331,8 @@ async function main(): Promise<number> {
     case 'open':
       await openApp();
       return 0;
+    case 'restart':
+      return await restartServer();
     case 'step':
       await step(args);
       return 0;
@@ -322,7 +342,7 @@ async function main(): Promise<number> {
       printPrompt(args);
       return 0;
     default:
-      return fail('Usage: mc <serve|open|push|wait|reply|resolve|done|prompt|step|avatars> ...');
+      return fail('Usage: mc <serve|open|restart|push|wait|reply|resolve|done|prompt|step|avatars> ...');
   }
 }
 

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { consensusSeverity, findingTodo, findingTodos, modeFor, resolveLogin, runIdFor, stripRefs, type TallyItem } from './prc';
+import { alsoRaisedAs, consensusSeverity, findingTodo, findingTodos, modeFor, resolveLogin, runIdFor, stripRefs, type TallyItem } from './prc';
 
 const PATCH = `diff --git a/terraform/grouper.tf b/terraform/grouper.tf
 --- a/terraform/grouper.tf
@@ -55,7 +55,8 @@ describe('findingTodo', () => {
     expect(todo.question).toBe('The tags block drops the Vanta label.\n\nFix: Merge the tags.');
     expect(todo.severity).toBe('regression');
     expect(todo.verification).toBe('Reproduced with tofu plan on dev');
-    expect(todo.positions).toEqual([]);
+    expect(todo.positions.map((position) => position.agent)).toEqual(['claude']);
+    expect(todo.positions[0]?.summary).toBe('agree · regression');
     expect(todo.evidence).toEqual([{ ref: 'terraform/grouper.tf:12' }]);
     expect(todo.links).toEqual([{ label: 'Pull request', url: 'https://github.com/o/r/pull/9' }]);
     expect(todo.diffs).toHaveLength(1);
@@ -134,5 +135,46 @@ describe('ref prefixes, run ids and severity consensus', () => {
     expect(consensusSeverity({ ...base, claude: seat('agree', 'breaking'), codex: seat('revise', 'regression'), grok: undefined })).toBe('breaking');
     expect(consensusSeverity({ ...base, claude: seat('disagree', 'breaking'), codex: seat('agree', 'refactor'), grok: seat('revise', 'refactor') })).toBe('refactor');
     expect(consensusSeverity({ ...base, claude: seat('disagree', 'breaking'), codex: undefined, grok: undefined })).toBe('worth-knowing');
+  });
+});
+
+describe('alsoRaisedAs', () => {
+  const reasoned = (stance: 'agree' | 'revise', reason: string) => ({ ...seat(stance, 'dead-code'), reason });
+  const item = (id: string, owner: 'claude' | 'codex' | 'grok', reasons: Partial<Record<'claude' | 'codex' | 'grok', string>>): TallyItem => ({
+    ...AGREED,
+    id,
+    owner,
+    ...(reasons.claude !== undefined ? { claude: reasoned('agree', reasons.claude) } : {}),
+    ...(reasons.codex !== undefined ? { codex: reasoned('revise', reasons.codex) } : {}),
+    ...(reasons.grok !== undefined ? { grok: reasoned('agree', reasons.grok) } : {}),
+  });
+  const tally = [
+    item('C2', 'claude', { claude: 'Maintained. Same root as X4 and G2.', grok: 'Same root cause as X4 and G2. Unused helper.' }),
+    item('X4', 'codex', { claude: 'Same root as C2. Remove it.' }),
+    item('G2', 'grok', { codex: 'Nothing about roots here.' }),
+    item('C4', 'claude', { grok: 'Same root cause as G9, not in the tally.' }),
+    item('C5', 'claude', { claude: 'Same root as C5 itself and the second half of C2.' }),
+  ];
+
+  test('items that name each other as the same root link both ways, ignoring unknown ids and self references', () => {
+    const raised = alsoRaisedAs(tally);
+    expect(raised.get('C2')).toEqual(['X4', 'G2']);
+    expect(raised.get('X4')).toEqual(['C2']);
+    expect(raised.get('G2')).toEqual(['C2']);
+    expect(raised.get('C4')).toEqual([]);
+    expect(raised.get('C5')).toEqual([]);
+  });
+
+  test('a finding carries its positions and the ids it was also raised as', () => {
+    const todo = findingTodo(tally[0] as TallyItem, '', undefined, ['X4', 'G2']);
+    expect(todo.alsoRaisedAs).toEqual(['X4', 'G2']);
+    expect(todo.positions.map((position) => position.summary)).toEqual(['agree · dead-code', 'agree · dead-code']);
+    expect('alsoRaisedAs' in findingTodo(tally[3] as TallyItem, '')).toBe(false);
+  });
+
+  test('findingTodos links agreed findings to the items that name them', () => {
+    const todos = findingTodos([tally[0] as TallyItem, tally[1] as TallyItem, tally[2] as TallyItem], '');
+    expect(todos.find((todo) => todo.id === 'X4')?.alsoRaisedAs).toEqual(['C2']);
+    expect(todos.find((todo) => todo.id === 'G2')?.alsoRaisedAs).toEqual(['C2']);
   });
 });

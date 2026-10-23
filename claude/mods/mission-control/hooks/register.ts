@@ -24,6 +24,7 @@ type Question = {
 type Work = {
   questions: Question[]
   submitted: { runId: string; todoIds: string[]; waitActive: boolean }[]
+  sync: { requestedAt: string; prompt: string } | null
 }
 
 function askPrompt(q: Question): string {
@@ -62,6 +63,7 @@ export const register: Register = on => {
 
     const answering = new Set<string>()
     const waking = new Set<string>()
+    const syncing = new Set<string>()
 
     async function answer(q: Question): Promise<void> {
       const reply = await $.model.fork({ prompt: askPrompt(q) })
@@ -71,6 +73,11 @@ export const register: Register = on => {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ text: clamp(reply.text) }),
       })
+    }
+
+    async function sync(request: { requestedAt: string; prompt: string }): Promise<void> {
+      await $.http.fetch(`${API}/api/sessions/${encodeURIComponent(sessionId)}/sync/ack`, { method: 'POST' })
+      await $.prompt.submit({ text: `${request.prompt}\n\n(Requested by Thinh from Mission Control.)` })
     }
 
     async function wake(runId: string): Promise<void> {
@@ -102,7 +109,12 @@ export const register: Register = on => {
         started += 1
         void wake(s.runId).catch(() => undefined)
       }
-      const busy = work.questions.length > 0 || work.submitted.some((s) => !s.waitActive)
+      if (work.sync !== null && !syncing.has(work.sync.requestedAt)) {
+        syncing.add(work.sync.requestedAt)
+        started += 1
+        void sync(work.sync).catch(() => undefined)
+      }
+      const busy = work.questions.length > 0 || work.submitted.some((s) => !s.waitActive) || work.sync !== null
       return started === 0 && busy ? 1000 : 50
     }
 
