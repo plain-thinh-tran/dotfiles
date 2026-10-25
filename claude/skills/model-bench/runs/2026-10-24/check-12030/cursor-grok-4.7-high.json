@@ -1,0 +1,32 @@
+{
+  "seat": "cursor-grok-4.7-high",
+  "pr": "https://github.com/team-plain/services/pull/12030",
+  "seconds": 330,
+  "error": null,
+  "result": {
+    "verdict": "fix-first",
+    "summary": "The 429 is a real bug: name search scans an unsearchable incident list, and the client retries rate limits inside the same minute. This patch makes that error less common by returning a successful shorter list, and it leaves the retry path that spends the shared workspace budget.",
+    "rootCause": "confirmed",
+    "problems": [
+      {
+        "severity": "blocker",
+        "title": "Search succeeds while dropping matches",
+        "detail": "Paging stops once 25 substring matches have been seen, so a common term never gets past the newest 250 incidents. The resolver reports hasNextPage false, so a missing older incident looks like a complete result.",
+        "location": "packages/issue-trackers/src/definitions/incidentio/incidentio.ts:334"
+      },
+      {
+        "severity": "major",
+        "title": "429 retries still spend the same limit",
+        "detail": "The client retries every 429 three times, and Retry-After of 1 second does not wait out a per-minute window. Overlapping searches share one workspace token, with no cache or cancellation, so a few agents can still trip the limit.",
+        "location": "packages/issue-trackers/src/definitions/incidentio/client.ts:152"
+      },
+      {
+        "severity": "minor",
+        "title": "Tests only restate the caps",
+        "detail": "The new tests check that the mock is called once or three times. They do not cover 24 matches continuing, matches added across pages, or the 429 retry path.",
+        "location": "packages/issue-trackers/src/definitions/incidentio/incidentio.test.ts:192"
+      }
+    ],
+    "betterFix": "Cache the newest incident page per workspace connection and filter it in memory for each keystroke. Do not retry a 429 whose Retry-After is inside the same limit window, and if a later page fails return the matches already fetched and mark the list truncated."
+  }
+}

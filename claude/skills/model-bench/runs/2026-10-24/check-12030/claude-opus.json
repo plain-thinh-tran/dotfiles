@@ -1,0 +1,44 @@
+{
+  "seat": "claude-opus",
+  "pr": "https://github.com/team-plain/services/pull/12030",
+  "seconds": 77,
+  "error": null,
+  "result": {
+    "verdict": "fix-first",
+    "summary": "The 429 diagnosis is right, and loading one page for an empty query is a real improvement. Cutting name search from 2,500 to 750 incidents (or fewer once 25 match) silently loses older incidents for high volume workspaces, and it leaves the 429 retries and the shared rate limit across agents untouched.",
+    "rootCause": "confirmed",
+    "problems": [
+      {
+        "severity": "major",
+        "title": "Silent loss of search depth",
+        "detail": "A name search now covers at most the newest 750 incidents instead of 2,500, and nothing tells the user. High volume workspaces like the one that triggered this can no longer find older incidents by name.",
+        "location": "packages/issue-trackers/src/definitions/incidentio/incidentio.ts:91"
+      },
+      {
+        "severity": "major",
+        "title": "429 retries still burn the limit",
+        "detail": "defaultAxiosRetryCondition retries a 429 3 times after Retry-After 1s, inside the same minute. Several agents in one workspace share the limit, so the 429 and the error tracking issue will come back.",
+        "location": "packages/issue-trackers/src/definitions/incidentio/client.ts:153"
+      },
+      {
+        "severity": "minor",
+        "title": "Description overstates coverage",
+        "detail": "It says a name search still covers the newest 750, but paging stops once 25 matches are found.",
+        "location": "packages/issue-trackers/src/definitions/incidentio/incidentio.ts:327"
+      },
+      {
+        "severity": "minor",
+        "title": "Tests pin constants only",
+        "detail": "They count calls for fixed mocks. Nothing covers a 429, a typing burst, or a match on an older page that is now missed.",
+        "location": "packages/issue-trackers/src/definitions/incidentio/incidentio.test.ts:171"
+      },
+      {
+        "severity": "minor",
+        "title": "Unneeded cursor check rewrite",
+        "detail": "Changing !nextCursor to a typeof check changes nothing and adds churn.",
+        "location": "packages/issue-trackers/src/definitions/incidentio/incidentio.ts:324"
+      }
+    ],
+    "betterFix": "Keep the one page empty query, and cache the incident list per connection for 30 to 60 seconds so each keystroke filters the cache while the 2,500 depth stays. Turn off the 429 retry for this interactive search and return a clear rate limited error instead of internalError."
+  }
+}

@@ -1,0 +1,44 @@
+{
+  "seat": "cursor-claude-sonnet-5-5-high",
+  "pr": "https://github.com/team-plain/services/pull/11797",
+  "seconds": 81,
+  "error": null,
+  "result": {
+    "verdict": "fix-first",
+    "summary": "The change only lowers a log level for an attachment not-found error that the mutation already returns to the client, so public behaviour is unchanged and it is plausibly noise. But the PR's cause (different customer) is a guess, the new log-level rule is untested, and the check is by error code rather than by input source.",
+    "rootCause": "confirmed",
+    "problems": [
+      {
+        "severity": "major",
+        "title": "New classification logic has no test",
+        "detail": "The recorder test calls scope.fail with logLevel info directly, and the litest never checks log levels. Nothing exercises failResolvedAttachments, so removing the entity/attachment condition would still pass.",
+        "location": "packages/importers/src/handlers/importRecorder.test.ts:36"
+      },
+      {
+        "severity": "major",
+        "title": "Cause is asserted, not shown",
+        "detail": "entity_not_found also covers a missing id, and getAttachments is an eventually consistent read (no ConsistentRead), so an upload followed by an immediate import could miss. The PR doesn't show which case caused the Datadog issue, and info-level logging would hide a real race.",
+        "location": "packages/aggregates/src/attachments/attachmentDb.ts:173"
+      },
+      {
+        "severity": "minor",
+        "title": "Downgrade is keyed on error code, not on input source",
+        "detail": "Any future import path that yields entity_not_found for an attachment gets info level. The only client-supplied source is the UnresolvedPlainAttachment case.",
+        "location": "packages/importers/src/handlers/importThreadMessage.ts:316"
+      },
+      {
+        "severity": "minor",
+        "title": "Sibling client-input attachment errors still log at error",
+        "detail": "invalid_attachment_state, invalid_attachment_type, attachment_not_uploaded and attachment_file_size_too_large are the same kind of client mistake. They still log at error, so this just moves the alert to the next error.",
+        "location": "packages/importers/src/handlers/importThreadMessage.ts:322"
+      },
+      {
+        "severity": "minor",
+        "title": "Log-level change against repo rule, and call-site comment",
+        "detail": "AGENTS.md says not to change log levels unless asked. The new comment also describes mutation behaviour from inside a shared importer.",
+        "location": "packages/importers/src/handlers/importThreadMessage.ts:321"
+      }
+    ],
+    "betterFix": "Decide the level at the API call site: for source 'api', where the mutation already returns the error to the client, log client-input attachment failures (all of them, not just not-found) at info. Test it through the litest with a log spy, covering a missing id, another customer's attachment, and a non-input error that must stay at error. Also check whether attachment lookups in the import path should use a consistent read."
+  }
+}

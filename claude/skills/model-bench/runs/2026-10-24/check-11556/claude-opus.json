@@ -1,0 +1,32 @@
+{
+  "seat": "claude-opus",
+  "pr": "https://github.com/team-plain/services/pull/11556",
+  "seconds": 77,
+  "error": null,
+  "result": {
+    "verdict": "merge",
+    "summary": "The 404 comes from deleting the same WorkOS org twice, once in the workspace deleter and again in workos-sync-handler on workspace_deleted. Treating a 404 as already deleted is the correct idempotent fix and matches the membership delete pattern, but the description misstates the impact and the redundant second delete is left in place.",
+    "rootCause": "confirmed",
+    "problems": [
+      {
+        "severity": "minor",
+        "title": "Description misstates impact",
+        "detail": "The workspace row is deleted and the event emitted before the sync handler runs, so workspace deletion was never blocked. What the 404 actually blocked was hub org and hub role cleanup, which retried into the DLQ.",
+        "location": "lambdas/workos-sync-handler/src/handlers/handleWorkspaceDeletedEvent.ts:21"
+      },
+      {
+        "severity": "minor",
+        "title": "Redundant double delete remains",
+        "detail": "deleteWorkspace's WorkOS step always deletes the org before the event, so the sync handler's primary org delete always 404s in prod. Two owners for one side effect.",
+        "location": "packages/deleter/src/deleters/deleteWorkspace.ts:290"
+      },
+      {
+        "severity": "minor",
+        "title": "Litest misses the case that mattered",
+        "detail": "The new test sets workosHubOrganizationId to null, so it never proves that hub cleanup still runs after a 404 on the primary org.",
+        "location": "lambdas/workos-sync-handler/src/handlers/handleWorkspaceDeletedEvent.litest.ts:72"
+      }
+    ],
+    "betterFix": "Keep the idempotent 404 handling. As a follow-up, give primary org deletion a single owner (deleter or event handler, not both), and extend the litest so a 404 on the primary org still deletes the unused hub org."
+  }
+}

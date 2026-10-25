@@ -1,0 +1,26 @@
+{
+  "seat": "cursor-grok-4.7-high",
+  "pr": "https://github.com/team-plain/services/pull/11556",
+  "seconds": 339,
+  "error": null,
+  "result": {
+    "verdict": "merge",
+    "summary": "Workspace deletion removes the WorkOS organization, then the sync handler deletes it again, so the 404 is the expected second delete. Treating that 404 as success matches membership and role deletes, stops the retry, and still fails the event on any other WorkOS error.",
+    "rootCause": "confirmed",
+    "problems": [
+      {
+        "severity": "minor",
+        "title": "Tests only restate the new branches",
+        "detail": "The litest stubs entity_not_found and checks isOk. The unit test feeds the parser a plain 404 object. Neither covers a real client 404, a non-404 failure, or hub cleanup after the organization is already gone.",
+        "location": "lambdas/workos-sync-handler/src/handlers/handleWorkspaceDeletedEvent.litest.ts:73"
+      },
+      {
+        "severity": "minor",
+        "title": "First delete now succeeds when the id is missing",
+        "detail": "The swallow is on the shared aggregate, so the workspace deleter and the hub-disconnect command also proceed when WorkOS has no organization for that id. A wrong id no longer stops workspace deletion.",
+        "location": "packages/aggregates/src/workos/workosAggregate.ts:492"
+      }
+    ],
+    "betterFix": ""
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "seat": "cursor-gemini-4-argon-high",
+  "pr": "https://github.com/team-plain/services/pull/12030",
+  "seconds": 113,
+  "error": null,
+  "result": {
+    "verdict": "merge",
+    "summary": "The PR fixes incident.io 429 rate-limit exhaustion by capping client-side search pagination to 1 page on empty queries, 3 pages max on name queries, and stopping early at 25 matches. Error logging and propagation remain intact and the unit tests cover each termination path.",
+    "rootCause": "confirmed",
+    "problems": [],
+    "betterFix": ""
+  }
+}

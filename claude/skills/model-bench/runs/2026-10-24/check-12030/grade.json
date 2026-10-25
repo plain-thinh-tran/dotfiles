@@ -1,0 +1,322 @@
+{
+ "pr": 12030,
+ "reference": {
+  "verdict": "merge",
+  "reasoning": "Fix scope is small and boring: one page for an empty term, three pages maximum for name searches, early stop at 25 matches, with tests for each path, preserved error logging and the direct lookup fast path. It cuts worst case list calls per query from 10 to 3 (and to 1 for common terms), which addresses the reported burst of 89 list calls plus retries in a minute. The trade offs seats called major or blocker are disclosed in the PR description (newest 750, sooner at 25 matches), and the hasNextPage false behaviour pre dates the PR. The remaining concerns (429 retries, no cache or cancellation, 429 mapped to internalError, shared workspace limit) are real but pre existing and out of scope for a paging cap; they are follow ups, not defects introduced here. Nothing in the diff is incorrect or risky to production, so merge. A reviewer reasonably wanting a cache would be asking for a different, larger PR."
+ },
+ "claims": [
+  {
+   "id": "C1",
+   "claim": "Root cause: each keystroke triggers an uncancelled multi page list walk, with 429s retried, burning incident.io's 60/min list limit.",
+   "status": "TRUE",
+   "weight": "none",
+   "evidence": "packages/issue-trackers/src/definitions/incidentio/incidentio.ts:312",
+   "reason": "Per query the loop walks up to 10 pages (old code) with no cancellation, and the client retries 429s (client.ts:153); matches the PR diagnosis."
+  },
+  {
+   "id": "C2",
+   "claim": "The PR mitigates rather than fixes: 429s, an empty picker and the Error Tracking issue can still recur (3 calls per non matching query, no coordination).",
+   "status": "PARTLY",
+   "weight": "minor",
+   "evidence": "packages/issue-trackers/src/definitions/incidentio/incidentio.ts:50",
+   "reason": "Worst case drops from 10 to 3 pages per query and 1 for empty or common terms, so the reported burst shrinks about 3x; recurrence under very fast typing or several users is still possible, but the PR scopes itself to capping paging."
+  },
+  {
+   "id": "C3",
+   "claim": "The client still retries a 429 three times with Retry-After of 1s inside the same per minute window, and the PR leaves that unchanged.",
+   "status": "TRUE",
+   "weight": "minor",
+   "evidence": "packages/issue-trackers/src/definitions/incidentio/client.ts:153",
+   "reason": "retries: 3 with defaultAxiosRetryCondition returning true for 429 (axios-helpers/index.ts:26-30) and delay taken from Retry-After (index.ts:77-90); untouched, but out of scope for a paging cap PR."
+  },
+  {
+   "id": "C4",
+   "claim": "Name search window shrinks from newest 2,500 incidents to newest 750 (and fewer once 25 matches are seen), so older incidents are not found by name.",
+   "status": "TRUE",
+   "weight": "minor",
+   "evidence": "packages/issue-trackers/src/definitions/incidentio/incidentio.ts:50",
+   "reason": "SEARCH_MAX_PAGES 10 to 3 with 250 per page; the PR description states this trade off in its lead sentence and point 7."
+  },
+  {
+   "id": "C5",
+   "claim": "The description overstates coverage: it says name search 'still covers the newest 750' while paging also stops at 25 matches.",
+   "status": "TRUE",
+   "weight": "nit",
+   "evidence": "verify-12030.pr.md:7",
+   "reason": "Point 7 says 750 without the 25 match qualifier, although the lead sentence does mention it; trivial wording."
+  },
+  {
+   "id": "C6",
+   "claim": "The cut in coverage is hidden or the description claims older incidents are still covered / presents it as preserved behaviour.",
+   "status": "FALSE",
+   "weight": "none",
+   "evidence": "verify-12030.pr.md:3",
+   "reason": "The lead sentence says search stops after the newest 750 incidents or sooner at 25 matches; the description never claims older incidents are covered."
+  },
+  {
+   "id": "C7",
+   "claim": "The target workspace has about 8,000 incidents (inferred from INC-6201 and INC-8193).",
+   "status": "UNVERIFIABLE",
+   "weight": "none",
+   "evidence": "packages/issue-trackers/src/definitions/incidentio/incidentio.test.ts:71",
+   "reason": "Those are test fixture reference strings and prove nothing about workspace size."
+  },
+  {
+   "id": "C8",
+   "claim": "Stopping at 25 matches means a common term never gets past the newest 250 incidents, and the resolver reports hasNextPage false so truncated results look complete (rated blocker by one seat).",
+   "status": "TRUE",
+   "weight": "minor",
+   "evidence": "packages/issue-trackers/src/definitions/incidentio/incidentio.ts:334",
+   "reason": "Mechanics are right (page size 250, break at 25 matches; core-graphql searchThreadLinkCandidatesQuery.ts hasNextPage always false), but hasNextPage was always false and this is typeahead where the user refines the term, so not a blocker."
+  },
+  {
+   "id": "C9",
+   "claim": "Nothing aborts, dedupes or coalesces superseded searches, so each keystroke can still run up to three list calls to completion.",
+   "status": "TRUE",
+   "weight": "minor",
+   "evidence": "packages/core-graphql/src/threads/links/searchThreadLinkCandidatesQuery.ts:13",
+   "reason": "The resolver and aggregate have no cancellation or in flight sharing; fixing needs client abort or a cache, beyond this PR's scope."
+  },
+  {
+   "id": "C10",
+   "claim": "The incident.io rate limit is shared by the whole workspace connection, so 3 calls per non matching query exhausts it at about 20 queries a minute across the team.",
+   "status": "TRUE",
+   "weight": "minor",
+   "evidence": "packages/aggregates/src/thread-link/threadLinkAggregate.ts:2319",
+   "reason": "One nangoConnectionId from the workspace service authorization is used for every user; 60/3 = 20."
+  },
+  {
+   "id": "C11",
+   "claim": "A 429 is mapped to internalError and logged at error, so Error Tracking keeps firing and nothing returns a rate limited or partial result.",
+   "status": "TRUE",
+   "weight": "minor",
+   "evidence": "packages/issue-trackers/src/definitions/incidentio/client.ts:227",
+   "reason": "Axios throws on 429 after retries, the catch logs error and returns internalError; incidentio.ts:319 logs error again. The PR states this behaviour is intentionally kept."
+  },
+  {
+   "id": "C12",
+   "claim": "Tests only restate the new constants and do not cover 429, concurrency, an older page match being missed, 24 matches continuing, or accumulation across pages.",
+   "status": "PARTLY",
+   "weight": "nit",
+   "evidence": "packages/issue-trackers/src/definitions/incidentio/incidentio.test.ts:171",
+   "reason": "The new tests do exercise each termination path (1 page empty, stop at 25, 3 pages) and an error test exists at :235; the listed gaps (accumulation to 25 across pages, whitespace, boundary 24) are real but small, and 429 or concurrency are not unit testable here."
+  },
+  {
+   "id": "C13",
+   "claim": "Matching now uses the trimmed term, so whitespace only queries count as empty and fetch one page; this is undisclosed and untested.",
+   "status": "TRUE",
+   "weight": "nit",
+   "evidence": "packages/issue-trackers/src/definitions/incidentio/incidentio.ts:285",
+   "reason": "Old code lowercased the untrimmed searchTerm; new code uses term.trim() for both paths. Behaviour change is benign (arguably a fix) but unmentioned."
+  },
+  {
+   "id": "C14",
+   "claim": "The typeof nextCursor rewrite and helper extraction are churn.",
+   "status": "PARTLY",
+   "weight": "nit",
+   "evidence": "packages/issue-trackers/src/definitions/incidentio/incidentio.ts:331",
+   "reason": "The typeof/empty string check is equivalent to the old !nextCursor (nit), but incidentMatchesSearch is used in both the counting loop and the final filter, so it is justified, not churn."
+  },
+  {
+   "id": "C15",
+   "claim": "SEARCH_MATCH_LIMIT only stops paging and does not cap the number of returned candidates (up to 250 per page may be returned).",
+   "status": "TRUE",
+   "weight": "nit",
+   "evidence": "packages/issue-trackers/src/definitions/incidentio/incidentio.ts:345",
+   "reason": "The final filter returns every match across fetched pages; limit only gates the break."
+  },
+  {
+   "id": "C16",
+   "claim": "The list request ignores the search term, so every debounced query downloads identical term independent pages.",
+   "status": "TRUE",
+   "weight": "minor",
+   "evidence": "packages/issue-trackers/src/definitions/incidentio/incidentio.ts:313",
+   "reason": "listIncidents is called with only pageSize and after; no text filter exists on the endpoint."
+  },
+  {
+   "id": "C17",
+   "claim": "Better fix: cache incident list pages per connection for about a minute and filter in memory, keeping 2,500 depth.",
+   "status": "PARTLY",
+   "weight": "none",
+   "evidence": "packages/issue-trackers/src/definitions/incidentio/incidentio.ts:312",
+   "reason": "Would cut calls, but the lambda has no shared cache in this path, so it needs new infrastructure and a staleness trade off; the PR's plain cap is the boring option."
+  },
+  {
+   "id": "C18",
+   "claim": "Better fix: do not retry 429 on this interactive list path and return a rate limited error.",
+   "status": "PARTLY",
+   "weight": "none",
+   "evidence": "packages/issue-trackers/src/definitions/incidentio/client.ts:153",
+   "reason": "Feasible via retryOptions, but retryOptions is per client instance shared with getIncident, createIncident and listSeverities, and it changes error behaviour; it is a reasonable follow up, not required."
+  },
+  {
+   "id": "C19",
+   "claim": "A failure on any later page discards matches already fetched; the PR should return partial results and mark truncated.",
+   "status": "TRUE",
+   "weight": "minor",
+   "evidence": "packages/issue-trackers/src/definitions/incidentio/incidentio.ts:318",
+   "reason": "Any listResult.isErr returns Result.err immediately, throwing away earlier pages; pre existing and unchanged."
+  },
+  {
+   "id": "C20",
+   "claim": "The PR does what it says: 1 page for empty, 3 pages max for names, stop at 25 matches, error logging and propagation intact, tests cover each termination path.",
+   "status": "TRUE",
+   "weight": "none",
+   "evidence": "packages/issue-trackers/src/definitions/incidentio/incidentio.ts:309",
+   "reason": "maxPages, matchCount and break conditions at :309-336 implement it; error path unchanged at :318-321; tests at incidentio.test.ts:171,192,215."
+  },
+  {
+   "id": "C21",
+   "claim": "Empty query now returns only the newest 250 incidents instead of up to 2,500.",
+   "status": "TRUE",
+   "weight": "nit",
+   "evidence": "packages/issue-trackers/src/definitions/incidentio/incidentio.ts:309",
+   "reason": "maxPages is 1 for an empty term; sensible since further pages only add older rows."
+  }
+ ],
+ "missed": [
+  {
+   "claim": "When the direct reference lookup fails (for example with a 429 from the same limit), the code falls through to the list search, adding up to 3 more list calls on the rate limited key; unchanged by the PR.",
+   "evidence": "packages/issue-trackers/src/definitions/incidentio/incidentio.ts:297",
+   "weight": "nit"
+  }
+ ],
+ "seats": [
+  {
+   "seat": "claude-opus",
+   "verdict": "fix-first",
+   "verdictMatches": false,
+   "claims": [
+    "C1",
+    "C3",
+    "C4",
+    "C5",
+    "C10",
+    "C12",
+    "C14",
+    "C17",
+    "C18"
+   ],
+   "falseClaims": 0
+  },
+  {
+   "seat": "cursor-claude-opus-5-5-high",
+   "verdict": "fix-first",
+   "verdictMatches": false,
+   "claims": [
+    "C1",
+    "C2",
+    "C3",
+    "C4",
+    "C6",
+    "C7",
+    "C10",
+    "C12",
+    "C13",
+    "C16",
+    "C17",
+    "C18"
+   ],
+   "falseClaims": 1
+  },
+  {
+   "seat": "cursor-claude-sonnet-5-5-high",
+   "verdict": "fix-first",
+   "verdictMatches": false,
+   "claims": [
+    "C1",
+    "C2",
+    "C4",
+    "C6",
+    "C9",
+    "C10",
+    "C11",
+    "C12",
+    "C13",
+    "C14",
+    "C15",
+    "C17",
+    "C19"
+   ],
+   "falseClaims": 1
+  },
+  {
+   "seat": "cursor-composer-2.5",
+   "verdict": "fix-first",
+   "verdictMatches": false,
+   "claims": [
+    "C1",
+    "C2",
+    "C3",
+    "C4",
+    "C9",
+    "C12",
+    "C15",
+    "C18",
+    "C21"
+   ],
+   "falseClaims": 0
+  },
+  {
+   "seat": "cursor-cursor-grok-4.6-medium",
+   "verdict": "fix-first",
+   "verdictMatches": false,
+   "claims": [
+    "C2",
+    "C3",
+    "C4",
+    "C8",
+    "C9",
+    "C11",
+    "C12",
+    "C18"
+   ],
+   "falseClaims": 0
+  },
+  {
+   "seat": "cursor-gemini-4-argon-high",
+   "verdict": "merge",
+   "verdictMatches": true,
+   "claims": [
+    "C1",
+    "C20"
+   ],
+   "falseClaims": 0
+  },
+  {
+   "seat": "cursor-gpt-5.6-sol-high",
+   "verdict": "fix-first",
+   "verdictMatches": false,
+   "claims": [
+    "C1",
+    "C2",
+    "C3",
+    "C4",
+    "C9",
+    "C10",
+    "C12",
+    "C17",
+    "C18"
+   ],
+   "falseClaims": 0
+  },
+  {
+   "seat": "cursor-grok-4.7-high",
+   "verdict": "fix-first",
+   "verdictMatches": false,
+   "claims": [
+    "C1",
+    "C2",
+    "C3",
+    "C8",
+    "C9",
+    "C10",
+    "C12",
+    "C17",
+    "C18",
+    "C19"
+   ],
+   "falseClaims": 0
+  }
+ ]
+}

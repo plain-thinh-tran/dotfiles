@@ -222,6 +222,19 @@ if command -v claude &>/dev/null; then
   fi
 fi
 
+RAUMSCHIFF_DIR="${RAUMSCHIFF_DIR:-$HOME/personal/repos/Raumschiff}"
+if [[ ! -d "$RAUMSCHIFF_DIR" ]]; then
+  warn "Raumschiff not found at $RAUMSCHIFF_DIR, skipping (git clone git@github-pewh:PewhProgrammer/Raumschiff.git)"
+elif ! command -v swiftc &>/dev/null; then
+  warn "swiftc not found, skipping Raumschiff.app (run: xcode-select --install)"
+elif $DRY_RUN; then
+  dry "link mc and build Raumschiff.app from $RAUMSCHIFF_DIR"
+else
+  link "$RAUMSCHIFF_DIR/bin/mc" "$HOME/.claude/bin/mc"
+  info "Building Raumschiff.app..."
+  "$RAUMSCHIFF_DIR/macos/build.sh"
+fi
+
 ok()   { echo -e "  ${GREEN}[✓]${NC} $1"; }
 todo() { echo -e "  ${YELLOW}[!]${NC} $1"; }
 

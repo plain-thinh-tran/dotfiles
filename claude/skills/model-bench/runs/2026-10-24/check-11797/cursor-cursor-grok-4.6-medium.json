@@ -1,0 +1,32 @@
+{
+  "seat": "cursor-cursor-grok-4.6-medium",
+  "pr": "https://github.com/team-plain/services/pull/11797",
+  "seconds": 126,
+  "error": null,
+  "result": {
+    "verdict": "fix-first",
+    "summary": "The import still fails correctly for a bad attachment id; this only stops ImportRecorder from error-logging that expected miss so Datadog Error Tracking goes quiet. The write-up overclaims a wrong-customer root cause and special-cases one fingerprint instead of treating expected import validation consistently.",
+    "rootCause": "doubtful",
+    "problems": [
+      {
+        "severity": "major",
+        "title": "Symptom filter, not a policy",
+        "detail": "handlePendingAttachments already logs missing and wrong-customer attachments at info and returns entity_not_found. The PR only downgrades that same error in ImportRecorder, and still error-logs other expected client not-founds such as user.",
+        "location": "packages/importers/src/handlers/importThreadMessage.ts:316"
+      },
+      {
+        "severity": "major",
+        "title": "Tests restate plumbing, not the claim",
+        "detail": "The litest checks the public not_found/bulk_partial_failure response. The unit test only checks an explicit logLevel option. Neither asserts that importThreadMessage logs attachment misses at info.",
+        "location": "packages/importers/src/handlers/importRecorder.test.ts:34"
+      },
+      {
+        "severity": "minor",
+        "title": "Root cause is not unique",
+        "detail": "Missing attachment ids and customer mismatches share one entity_not_found. The description asserts a wrong-customer client bug that this code cannot prove.",
+        "location": "packages/aggregates/src/attachments/utils/handlePendingAttachments.ts:100"
+      }
+    ],
+    "betterFix": "If Error Tracking should ignore expected import validation, classify NotFound/validation failures as info inside recordFailed for every entity, and unit-test that choice on the import path. Do not add an attachment-only logLevel escape because that fingerprint appeared in Datadog."
+  }
+}

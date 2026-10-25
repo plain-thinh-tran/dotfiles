@@ -1,0 +1,32 @@
+{
+  "seat": "cursor-grok-4.7-high",
+  "pr": "https://github.com/team-plain/services/pull/11797",
+  "seconds": 392,
+  "error": null,
+  "result": {
+    "verdict": "fix-first",
+    "summary": "The import still returns not_found and leaves the message uncreated, so the client-facing behavior is fine. The patch drops Failed to import record to info for every attachment entity_not_found, including an id the non-consistent lookup missed, and the tests never assert that choice on the real path.",
+    "rootCause": "doubtful",
+    "problems": [
+      {
+        "severity": "major",
+        "title": "Info covers more than a wrong-customer id",
+        "detail": "A missing attachment id and a different-customer attachment both become entity_not_found. The batch get does not use a consistent read, so a just-uploaded id can miss and will no longer be an error log.",
+        "location": "packages/importers/src/handlers/importThreadMessage.ts:324"
+      },
+      {
+        "severity": "major",
+        "title": "Tests do not prove the log change",
+        "detail": "The unit test calls fail with logLevel info, so the attachment check never runs. The litest only checks the not_found result, which this path already returned.",
+        "location": "packages/importers/src/handlers/importRecorder.test.ts:42"
+      },
+      {
+        "severity": "minor",
+        "title": "Shared recorder can silence any failure",
+        "detail": "logLevel is a general option on recordFailed. The different-customer case is already logged at info in preparePendingAttachments, which is where the two cases are still distinct.",
+        "location": "packages/importers/src/handlers/importRecorder.ts:227"
+      }
+    ],
+    "betterFix": "Use a consistent read for this lookup. Choose info only on the different-customer branch before both cases become entity_not_found, and leave a missing attachment id at error."
+  }
+}

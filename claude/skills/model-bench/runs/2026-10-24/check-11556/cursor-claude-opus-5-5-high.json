@@ -1,0 +1,38 @@
+{
+  "seat": "cursor-claude-opus-5-5-high",
+  "pr": "https://github.com/team-plain/services/pull/11556",
+  "seconds": 106,
+  "error": null,
+  "result": {
+    "verdict": "fix-first",
+    "summary": "Treating a WorkOS 404 on organization delete as success is correct and matches how the sibling delete methods handle it. But the PR also lets hub clean-up run for the first time on deleted workspaces, including deleting the hub WorkOS org, and neither the description nor the tests cover that.",
+    "rootCause": "confirmed",
+    "problems": [
+      {
+        "severity": "major",
+        "title": "Hub clean-up goes live without notice or tests",
+        "detail": "Hub workspaces keep workosOrganizationId, so the old 404 always returned before hub clean-up ran. Now the handler will delete the hub WorkOS org or its roles, and no test covers an org that is already gone combined with a hub org ID.",
+        "location": "lambdas/workos-sync-handler/src/handlers/handleWorkspaceDeletedEvent.ts:25"
+      },
+      {
+        "severity": "minor",
+        "title": "Description's 'deletion can finish' claim is wrong for the traced path",
+        "detail": "The workspace row is already deleted when the handler fails. The real gains are that deleter re-runs no longer get stuck at the workos step and that hub clean-up runs, and the PR describes neither.",
+        "location": "packages/deleter/src/deleters/deleteWorkspace.ts:290"
+      },
+      {
+        "severity": "minor",
+        "title": "Litest restates the implementation",
+        "detail": "It stubs the client to return entity_not_found and checks for ok, with the hub org set to null. It never runs the real deleter-then-handler sequence or the newly reachable hub branch.",
+        "location": "lambdas/workos-sync-handler/src/handlers/handleWorkspaceDeletedEvent.litest.ts:73"
+      },
+      {
+        "severity": "minor",
+        "title": "Two places still delete the same org",
+        "detail": "The deleter and the event handler both delete the org, so every workspace deletion still makes a DELETE call that 404s. The PR silences the symptom without deciding which side owns this delete.",
+        "location": "packages/deleter/src/deleters/deleteWorkspace.ts:274"
+      }
+    ],
+    "betterFix": "Keep the 404 handling. Add a litest where the org delete returns entity_not_found and workosHubOrganizationId is set, check that hub clean-up runs, and get the owners to confirm that deleting the hub org there is wanted. Separately, decide whether the deleter or the event handler owns the org delete, and remove the other."
+  }
+}

@@ -1,0 +1,256 @@
+{
+ "pr": 11556,
+ "reference": {
+  "verdict": "merge",
+  "reasoning": "The change is small, correct and matches the repo's existing idempotent delete pattern: the deleter always removes the org before the workspace row and event, so the handler's primary delete always 404s; mapping only 404/entity_not_found to entity_not_found and returning Ok in the aggregate stops the event failing while every other WorkOS error still fails (and is unit tested). Side effects are benign or beneficial: hub cleanup in the handler becomes reachable (existing intended code), and deleter reruns no longer get stuck. What the seats raised is follow up material: the description overstates that workspace deletion was blocked, the duplicate delete in the deleter and handler remains, and the litest does not cover the hub id case or assert the call. None of these break production or CI, so fix-first is not warranted; the two fix-first seats escalated minor design and test gaps to major."
+ },
+ "claims": [
+  {
+   "id": "C1",
+   "claim": "Root cause: the workspace deleter deletes the WorkOS org, then workos-sync-handler deletes it again on workspace_deleted and gets a 404 that used to fail the event.",
+   "status": "TRUE",
+   "weight": "none",
+   "evidence": "packages/deleter/src/deleters/deleteWorkspace.ts:275-295; packages/deleter/src/dag/createDeletionPlan.ts:63-67; lambdas/workos-sync-handler/src/handlers/handleWorkspaceDeletedEvent.ts:18-27",
+   "reason": "The workos step has no dependencies and the workspace root (which emits the event) depends on everything, so the org is always gone before the handler runs."
+  },
+  {
+   "id": "C2",
+   "claim": "The fix (map 404/entity_not_found, treat as success) matches the existing membership and role delete handling.",
+   "status": "TRUE",
+   "weight": "none",
+   "evidence": "packages/workos/src/api.ts:359-373,547-566; packages/aggregates/src/workos/workosAggregate.ts:419,492",
+   "reason": "Same getErrorStatus/getErrorCode mapper and same entity_not_found to Result.ok pattern as the siblings."
+  },
+  {
+   "id": "C3",
+   "claim": "Only 404/entity_not_found is swallowed; any other WorkOS error still returns internal_error and fails the event.",
+   "status": "TRUE",
+   "weight": "none",
+   "evidence": "packages/workos/src/api.ts:285-296,819-845; packages/workos/src/deleteOrganization.test.ts:48-62",
+   "reason": "mapError returns null for non 404, wrap falls through to internalError, which the aggregate still returns as Err."
+  },
+  {
+   "id": "C4",
+   "claim": "The PR description overstates impact: workspace deletion was not blocked, the row is deleted and the event emitted in the same transaction before the handler runs; only the subscriber retried.",
+   "status": "TRUE",
+   "weight": "nit",
+   "evidence": "packages/aggregates/src/workspace/workspaceAggregate.ts:1034-1056",
+   "reason": "deleteWorkspace commits the row delete and publishes the event; handler failure cannot undo or block it."
+  },
+  {
+   "id": "C5",
+   "claim": "Before the PR the primary org 404 always returned early, so hub org/role cleanup in the handler never ran for workspaces with a hub org (and the event retried to DLQ); now it runs.",
+   "status": "TRUE",
+   "weight": "minor",
+   "evidence": "lambdas/workos-sync-handler/src/handlers/handleWorkspaceDeletedEvent.ts:20-30,43-60; lambdas/billing-account-handler/src/downgrade/handleSsoCleanup.ts:20-24",
+   "reason": "Early return on deleteResult.isErr skipped the hub block; hub workspaces carry both ids. This is existing intended code becoming reachable, which is a benefit."
+  },
+  {
+   "id": "C6",
+   "claim": "Hub cleanup going live is a major risk: it will now delete the hub WorkOS org or roles with no notice in the description and no test.",
+   "status": "PARTLY",
+   "weight": "minor",
+   "evidence": "lambdas/workos-sync-handler/src/handlers/handleWorkspaceDeletedEvent.ts:43-60; lambdas/workos-sync-handler/src/handlers/handleWorkspaceDeletedEvent.litest.ts:72-99",
+   "reason": "No test combines a 404 primary org with a hub id (true), but the hub branch is pre-existing designed behaviour with its own litest, and deleting an unused hub org is the intended result; major is overstated."
+  },
+  {
+   "id": "C7",
+   "claim": "The deleter step and the event handler still both delete the same org, so every non test workspace deletion makes a redundant WorkOS call that 404s; two owners of one side effect.",
+   "status": "TRUE",
+   "weight": "minor",
+   "evidence": "packages/deleter/src/deleters/deleteWorkspace.ts:275-295; lambdas/workos-sync-handler/src/handlers/handleWorkspaceDeletedEvent.ts:18-27",
+   "reason": "Real redundancy, but harmless now that the delete is idempotent; a reasonable follow up, not a merge condition."
+  },
+  {
+   "id": "C8",
+   "claim": "The root cause remains and is a major problem; the legacy deleter WorkOS step should be removed so the event handler is the single owner.",
+   "status": "PARTLY",
+   "weight": "minor",
+   "evidence": "packages/deleter/src/deleters/deleteWorkspace.ts:275-295",
+   "reason": "The duplicate is real, but removing the step is a design change outside the PR's scope (and idempotency is needed for at least once delivery anyway); calling it major is wrong."
+  },
+  {
+   "id": "C9",
+   "claim": "Besides the event path, the deleter's own workos step previously got stuck on rerun when the org was already deleted (partial failure then retry), and the swallow now fixes that too, which the description does not mention.",
+   "status": "TRUE",
+   "weight": "nit",
+   "evidence": "packages/deleter/src/deleters/deleteWorkspace.ts:275-295; packages/deleter/src/deleters/deleteWorkspace.ts:362-400",
+   "reason": "Rerun re-executes the workos step with the row still present and the org id set; it used to hit the 404 and abort, now returns Ok via the shared aggregate."
+  },
+  {
+   "id": "C10",
+   "claim": "The litest sets workosHubOrganizationId to null, so it does not prove hub cleanup still runs after a 404 on the primary org.",
+   "status": "TRUE",
+   "weight": "minor",
+   "evidence": "lambdas/workos-sync-handler/src/handlers/handleWorkspaceDeletedEvent.litest.ts:72-99",
+   "reason": "Payload spreads workosHubOrganizationId: null explicitly."
+  },
+  {
+   "id": "C11",
+   "claim": "The litest only asserts isOk with a stubbed client; it does not assert deleteOrganization was called with the expected id and would pass if the call were skipped.",
+   "status": "TRUE",
+   "weight": "nit",
+   "evidence": "lambdas/workos-sync-handler/src/handlers/handleWorkspaceDeletedEvent.litest.ts:84-99",
+   "reason": "No spy or call assertion; though it does fail on the old code because the aggregate used to return Err, so it still guards the change."
+  },
+  {
+   "id": "C12",
+   "claim": "No single test goes from a real SDK 404 through the client mapping and aggregate to the handler result; unit test mocks the SDK, litest mocks the client.",
+   "status": "TRUE",
+   "weight": "nit",
+   "evidence": "packages/workos/src/deleteOrganization.test.ts:1-25; lambdas/workos-sync-handler/src/handlers/handleWorkspaceDeletedEvent.litest.ts:84-99",
+   "reason": "Each layer is covered separately, which is how the repo normally tests; the join is trivial."
+  },
+  {
+   "id": "C13",
+   "claim": "The Datadog error could originate from either the deleter retry or the handler since the log line is in the shared aggregate; the description blames only the handler without a trace.",
+   "status": "TRUE",
+   "weight": "nit",
+   "evidence": "packages/aggregates/src/workos/workosAggregate.ts:497-500",
+   "reason": "Both callers share the aggregate and its log; both are fixed by the change."
+  },
+  {
+   "id": "C14",
+   "claim": "Treating any 404 as already deleted means a wrong org id or wrong WorkOS environment is reported as success.",
+   "status": "TRUE",
+   "weight": "nit",
+   "evidence": "packages/workos/src/api.ts:287-296",
+   "reason": "Accepted trade off, identical to the membership and role deletes."
+  },
+  {
+   "id": "C15",
+   "claim": "The swallow lives in the shared aggregate, so the workspace deleter and the hub disconnect CLI also now proceed when WorkOS has no org for that id.",
+   "status": "TRUE",
+   "weight": "nit",
+   "evidence": "packages/aggregates/src/workos/workosAggregate.ts:489-495; packages/deleter/src/deleters/deleteWorkspace.ts:290; packages/cli-admin/src/disconnectWorkspacesFromWorkOSHub.ts:119",
+   "reason": "Both are the only other callers; for a deletion flow a missing org is the desired end state, so this is consistent."
+  },
+  {
+   "id": "C16",
+   "claim": "No test covers a non 404 WorkOS failure at the client level.",
+   "status": "FALSE",
+   "weight": "none",
+   "evidence": "packages/workos/src/deleteOrganization.test.ts:48-62",
+   "reason": "The second unit test rejects with a 500 and asserts the result is internal_error."
+  }
+ ],
+ "missed": [
+  {
+   "claim": "Nothing material missed. Minor: concurrent deletion of the last two workspaces of one hub can leave the hub org undeleted (each handler sees the other row) but that is pre existing and unrelated to this change.",
+   "evidence": "lambdas/workos-sync-handler/src/handlers/handleWorkspaceDeletedEvent.ts:43-60",
+   "weight": "nit"
+  }
+ ],
+ "seats": [
+  {
+   "seat": "claude-opus",
+   "verdict": "merge",
+   "verdictMatches": true,
+   "claims": [
+    "C1",
+    "C2",
+    "C4",
+    "C5",
+    "C7",
+    "C10"
+   ],
+   "falseClaims": 0
+  },
+  {
+   "seat": "cursor-claude-opus-5-5-high",
+   "verdict": "fix-first",
+   "verdictMatches": false,
+   "claims": [
+    "C1",
+    "C2",
+    "C4",
+    "C5",
+    "C6",
+    "C7",
+    "C9",
+    "C10",
+    "C11"
+   ],
+   "falseClaims": 0
+  },
+  {
+   "seat": "cursor-claude-sonnet-5-5-high",
+   "verdict": "merge",
+   "verdictMatches": true,
+   "claims": [
+    "C1",
+    "C2",
+    "C3",
+    "C7",
+    "C12",
+    "C13",
+    "C14"
+   ],
+   "falseClaims": 0
+  },
+  {
+   "seat": "cursor-composer-2.5",
+   "verdict": "merge",
+   "verdictMatches": true,
+   "claims": [
+    "C1",
+    "C2",
+    "C7",
+    "C12"
+   ],
+   "falseClaims": 0
+  },
+  {
+   "seat": "cursor-cursor-grok-4.6-medium",
+   "verdict": "merge",
+   "verdictMatches": true,
+   "claims": [
+    "C1",
+    "C2",
+    "C3",
+    "C12"
+   ],
+   "falseClaims": 0
+  },
+  {
+   "seat": "cursor-gemini-4-argon-high",
+   "verdict": "merge",
+   "verdictMatches": true,
+   "claims": [
+    "C1",
+    "C3"
+   ],
+   "falseClaims": 0
+  },
+  {
+   "seat": "cursor-gpt-5.6-sol-high",
+   "verdict": "fix-first",
+   "verdictMatches": false,
+   "claims": [
+    "C1",
+    "C2",
+    "C4",
+    "C7",
+    "C8",
+    "C11"
+   ],
+   "falseClaims": 0
+  },
+  {
+   "seat": "cursor-grok-4.7-high",
+   "verdict": "merge",
+   "verdictMatches": true,
+   "claims": [
+    "C1",
+    "C2",
+    "C3",
+    "C10",
+    "C11",
+    "C12",
+    "C15",
+    "C16"
+   ],
+   "falseClaims": 1
+  }
+ ]
+}

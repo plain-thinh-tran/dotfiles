@@ -1,0 +1,26 @@
+{
+  "seat": "cursor-composer-2.5",
+  "pr": "https://github.com/team-plain/services/pull/11556",
+  "seconds": 70,
+  "error": null,
+  "result": {
+    "verdict": "merge",
+    "summary": "The failure is a real double-delete (deleter then workos-sync-handler) that lacked the idempotent 404 handling membership and roles already had. The API mapper plus aggregate success-on-entity_not_found matches existing patterns and fixes event retries, not just logging.",
+    "rootCause": "confirmed",
+    "problems": [
+      {
+        "severity": "minor",
+        "title": "Split test coverage",
+        "detail": "The litest stubs entity_not_found at the client; only deleteOrganization.test.ts covers SDK 404 mapping, so there is no single test for the full stack.",
+        "location": "lambdas/workos-sync-handler/src/handlers/handleWorkspaceDeletedEvent.litest.ts:73"
+      },
+      {
+        "severity": "minor",
+        "title": "Redundant WorkOS deletes",
+        "detail": "Every non-test workspace deletion still calls WorkOS delete twice; idempotency fixes correctness but not the extra API call.",
+        "location": "packages/deleter/src/deleters/deleteWorkspace.ts:275"
+      }
+    ],
+    "betterFix": "Optional follow-up: delete the WorkOS org in only one place (or document why both are required) to avoid duplicate API traffic; keep idempotent delete either way."
+  }
+}

@@ -1,0 +1,288 @@
+{
+  "pr": 11797,
+  "reference": {
+    "verdict": "merge",
+    "reasoning": "The change does what the ticket needs with a small, boring diff: an attachment entity_not_found (missing id or another customer's attachment) from the API import path is expected client input that the mutation already returns as a validation error and logs at info, and the aggregate already logs at info, so the recorder's error log was the only noisy one. Public behaviour, the failed record entry and the Nango path are unchanged, and the description scopes the change honestly (user and other failures stay at error). Real findings are all small: the info vs error classifier has no direct test (minor), sibling client errors still log at error by design (minor), and a narrating comment breaks repo style (nit); the eventual consistency, cause attribution, contract documentation and design preference points are nits or out of scope. None justify blocking, so a reviewer would approve and optionally drop the comment."
+  },
+  "claims": [
+    {
+      "id": "C1",
+      "claim": "Public behaviour is unchanged: the mutation still returns not_found for the item, the message is not created, and the batch is bulk_partial_failure.",
+      "status": "TRUE",
+      "weight": "none",
+      "evidence": "packages/importers/src/handlers/importThreadMessage.ts:573,packages/importers/src/handlers/importThreadMessage.ts:673",
+      "reason": "Only the log level passes through failResolvedAttachments; scope.fail still returns Result.err(error) and recordFailed still writes the failed entry."
+    },
+    {
+      "id": "C2",
+      "claim": "entity_not_found/attachment covers both a missing id and another customer's attachment, so the PR cannot show which case fired in Datadog (wrong customer cause is asserted, not evidenced).",
+      "status": "TRUE",
+      "weight": "nit",
+      "evidence": "packages/aggregates/src/attachments/utils/handlePendingAttachments.ts:106-111,packages/aggregates/src/attachments/utils/handlePendingAttachments.ts:139-146",
+      "reason": "Both branches build the same entityNotFoundError({entity:'attachment'}); either way the error is expected client input, so the downgrade is right regardless of which fired."
+    },
+    {
+      "id": "C3",
+      "claim": "Root cause assessment: the noisy 'Failed to import record' error is an expected client validation failure that the mutation already returns (and logs at info) and the aggregate already logs at info, so error level was mis-leveled noise.",
+      "status": "TRUE",
+      "weight": "none",
+      "evidence": "packages/core-graphql/src/helpers/translateDomainErrorToMutationError.ts:79,packages/aggregates/src/attachments/utils/handlePendingAttachments.ts:106",
+      "reason": "Mutation logs 'Mutation error' at info and the aggregate logs the miss at info; only the recorder logged at error."
+    },
+    {
+      "id": "C4",
+      "claim": "Only attachment entity_not_found is downgraded; other client input failures on this mutation (invalid_attachment_state, attachment_not_uploaded, invalid_attachment_type, file size/type, unknown author/customer/user ids) still log at error.",
+      "status": "TRUE",
+      "weight": "minor",
+      "evidence": "packages/importers/src/handlers/importThreadMessage.ts:321-324",
+      "reason": "The condition checks code and entity only. The PR description states this scope explicitly (item 4), so it is intentional narrowness, not an omission."
+    },
+    {
+      "id": "C5",
+      "claim": "The new classification in failResolvedAttachments has no test: the litest does not assert log level and would pass with the production change reverted, and the recorder unit test passes logLevel directly to scope.fail.",
+      "status": "TRUE",
+      "weight": "minor",
+      "evidence": "packages/importers/src/handlers/importRecorder.test.ts:38-54",
+      "reason": "Nothing exercises the info vs error choice in failResolvedAttachments; a one line condition guarded only by reading it."
+    },
+    {
+      "id": "C6",
+      "claim": "getAttachments in the import path is an eventually consistent read (no ConsistentRead), so a just uploaded id could miss, and that miss is now not an error log.",
+      "status": "PARTLY",
+      "weight": "nit",
+      "evidence": "packages/aggregates/src/attachments/attachmentDb.ts:173",
+      "reason": "Read is indeed eventually consistent by default and handlePendingAttachments does not request consistency, but the miss was already logged at info in the aggregate and returned to the client; only Error Tracking loses it, and the race is hypothetical."
+    },
+    {
+      "id": "C7",
+      "claim": "Downgrade is keyed on error code/entity, not input source, so any future path producing entity_not_found for an attachment would log at info; today the Nango path converts these to skips so the risk is latent.",
+      "status": "TRUE",
+      "weight": "nit",
+      "evidence": "packages/importers/src/handlers/importThreadMessage.ts:994-996,packages/importers/src/handlers/importThreadMessage.ts:1099",
+      "reason": "Nango fetch paths map entity_not_found to recordSkipped, so only the UnresolvedPlainAttachment path reaches the new branch today."
+    },
+    {
+      "id": "C8",
+      "claim": "The PR changes a log level although AGENTS.md says not to change log levels unless asked.",
+      "status": "PARTLY",
+      "weight": "nit",
+      "evidence": "AGENTS.md:114",
+      "reason": "Rule exists, but the Linear ticket (PE-1436, Error Tracking issue) is effectively the ask to quiet this log."
+    },
+    {
+      "id": "C9",
+      "claim": "The new comment in failResolvedAttachments narrates the fix and describes mutation behaviour from inside a shared importer, against repo rule on WHAT/reviewer aimed comments.",
+      "status": "TRUE",
+      "weight": "nit",
+      "evidence": "packages/importers/src/handlers/importThreadMessage.ts:321-322",
+      "reason": "Comment explains why and states what the mutation does; AGENTS.md:115 and the user's own rule say no such comments."
+    },
+    {
+      "id": "C10",
+      "claim": "An INBOUND author need not be the thread customer, yet attachments are validated against thread.customerId and rejected as 'not found', and the schema does not document this requirement.",
+      "status": "TRUE",
+      "weight": "nit",
+      "evidence": "packages/importers/src/handlers/importThreadMessage.ts:386,packages/core-graphql/src/schema.ts:14677,packages/core-graphql/src/imports/importThreadMessagesMutation.ts:20",
+      "reason": "Factually true (no author vs thread customer check, attachmentIds doc is silent), but it is a pre-existing API doc concern outside this logging change and rejecting cross customer attachments is intended."
+    },
+    {
+      "id": "C11",
+      "claim": "logLevel is a general per call option on ImportRecorder.fail/recordFailed, so any call site can silence a failure one at a time instead of a single classification rule.",
+      "status": "TRUE",
+      "weight": "nit",
+      "evidence": "packages/importers/src/handlers/importRecorder.ts:95-101,223-231",
+      "reason": "Option is general, but it is typed to info|error and defaults to error; design preference only."
+    },
+    {
+      "id": "C12",
+      "claim": "Better fix is to classify log level for all client validation / NOT_FOUND failures inside recordFailed (or via publicError type) rather than special casing one attachment code.",
+      "status": "PARTLY",
+      "weight": "nit",
+      "evidence": "packages/importers/src/handlers/importRecorder.ts:219-237",
+      "reason": "recordFailed is shared with the Nango sync path where entity_not_found can be a real failure, so a blanket rule would hide real errors; a validation based rule at the API call site is feasible but larger than the ticket."
+    },
+    {
+      "id": "C13",
+      "claim": "Every attachment entity_not_found on import (missing id or wrong customer) now logs at info, so integration mistakes may stop surfacing in Error Tracking.",
+      "status": "TRUE",
+      "weight": "nit",
+      "evidence": "packages/importers/src/handlers/importThreadMessage.ts:323-324",
+      "reason": "That is the intended effect of the PR; the client still gets the error and the aggregate logs at info."
+    },
+    {
+      "id": "C14",
+      "claim": "Missing author/customer/user and other entity_not_found import failures still log at error, so only attachment is special cased (inconsistent policy).",
+      "status": "TRUE",
+      "weight": "nit",
+      "evidence": "packages/importers/src/handlers/importThreadMessage.ts:434,packages/importers/src/handlers/importThreadMessage.ts:475",
+      "reason": "messageScope.fail(ctx, authorResult.error) and thread not found paths still call scope.fail with default error level; stated in PR description item 4."
+    },
+    {
+      "id": "C15",
+      "claim": "The litest asserts outcomes that already held before the PR and never checks the log level, so it does not prove the change.",
+      "status": "TRUE",
+      "weight": "nit",
+      "evidence": "lambdas/core-graphql-api/src/imports/importThreadMessagesMutation.litest.ts:430-535",
+      "reason": "Test is a useful regression test of public behaviour but is not tied to the log change; the PR description describes it accurately."
+    },
+    {
+      "id": "C16",
+      "claim": "The change does not hide Nango sync failures.",
+      "status": "TRUE",
+      "weight": "none",
+      "evidence": "packages/importers/src/handlers/importThreadMessage.ts:994-996",
+      "reason": "Nango attachment not found already becomes a skip, and failResolvedAttachments only applies to results of resolveAttachments with matching entity."
+    },
+    {
+      "id": "C17",
+      "claim": "The implementation is sound: error is still returned and the failed import record is still written.",
+      "status": "TRUE",
+      "weight": "none",
+      "evidence": "packages/importers/src/handlers/importRecorder.ts:223-237",
+      "reason": "recordFailed writes the failed entry regardless of the log level."
+    },
+    {
+      "id": "C18",
+      "claim": "handlePendingAttachments/preparePendingAttachments already logs both the missing and the different customer cases at info, so the recorder was the only error level log (consistent with aggregate behaviour).",
+      "status": "TRUE",
+      "weight": "none",
+      "evidence": "packages/aggregates/src/attachments/utils/handlePendingAttachments.ts:106-111,packages/aggregates/src/attachments/utils/handlePendingAttachments.ts:134-146",
+      "reason": "Both branches log info before returning entityNotFoundError."
+    },
+    {
+      "id": "C19",
+      "claim": "Better fix: use info only on the different customer branch and leave a missing attachment id at error (plus consistent read).",
+      "status": "UNVERIFIABLE",
+      "weight": "nit",
+      "evidence": "packages/aggregates/src/attachments/utils/handlePendingAttachments.ts:106",
+      "reason": "A missing id supplied by the client is equally client input and already logged at info in the aggregate; recommendation is opinion and not clearly better."
+    }
+  ],
+  "missed": [
+    {
+      "claim": "No real functional bug missed; the only extras are minor: the PR litest does not cover a sibling client error that must stay at error, and the comment rule violation (C9) was raised by only one seat.",
+      "evidence": "packages/importers/src/handlers/importThreadMessage.ts:321-324",
+      "weight": "nit"
+    }
+  ],
+  "seats": [
+    {
+      "seat": "claude-opus",
+      "verdict": "merge",
+      "verdictMatches": true,
+      "claims": [
+        "C1",
+        "C2",
+        "C5",
+        "C7",
+        "C10",
+        "C18"
+      ],
+      "falseClaims": 0
+    },
+    {
+      "seat": "cursor-claude-opus-5-5-high",
+      "verdict": "fix-first",
+      "verdictMatches": false,
+      "claims": [
+        "C1",
+        "C2",
+        "C3",
+        "C4",
+        "C5",
+        "C6",
+        "C10",
+        "C11",
+        "C12",
+        "C15"
+      ],
+      "falseClaims": 0
+    },
+    {
+      "seat": "cursor-claude-sonnet-5-5-high",
+      "verdict": "fix-first",
+      "verdictMatches": false,
+      "claims": [
+        "C1",
+        "C3",
+        "C4",
+        "C5",
+        "C6",
+        "C7",
+        "C8",
+        "C9",
+        "C12"
+      ],
+      "falseClaims": 0
+    },
+    {
+      "seat": "cursor-composer-2.5",
+      "verdict": "merge",
+      "verdictMatches": true,
+      "claims": [
+        "C3",
+        "C5",
+        "C12",
+        "C13",
+        "C14",
+        "C15",
+        "C18"
+      ],
+      "falseClaims": 0
+    },
+    {
+      "seat": "cursor-cursor-grok-4.6-medium",
+      "verdict": "fix-first",
+      "verdictMatches": false,
+      "claims": [
+        "C2",
+        "C4",
+        "C5",
+        "C12",
+        "C14",
+        "C18"
+      ],
+      "falseClaims": 0
+    },
+    {
+      "seat": "cursor-gemini-4-argon-high",
+      "verdict": "fix-first",
+      "verdictMatches": false,
+      "claims": [
+        "C1",
+        "C3",
+        "C4",
+        "C5",
+        "C12",
+        "C16"
+      ],
+      "falseClaims": 0
+    },
+    {
+      "seat": "cursor-gpt-5.6-sol-high",
+      "verdict": "merge",
+      "verdictMatches": true,
+      "claims": [
+        "C1",
+        "C3",
+        "C5",
+        "C17"
+      ],
+      "falseClaims": 0
+    },
+    {
+      "seat": "cursor-grok-4.7-high",
+      "verdict": "fix-first",
+      "verdictMatches": false,
+      "claims": [
+        "C2",
+        "C5",
+        "C6",
+        "C11",
+        "C18",
+        "C19"
+      ],
+      "falseClaims": 0
+    }
+  ]
+}

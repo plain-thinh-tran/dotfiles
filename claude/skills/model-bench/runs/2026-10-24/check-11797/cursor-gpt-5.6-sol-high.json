@@ -1,0 +1,20 @@
+{
+  "seat": "cursor-gpt-5.6-sol-high",
+  "pr": "https://github.com/team-plain/services/pull/11797",
+  "seconds": 102,
+  "error": null,
+  "result": {
+    "verdict": "merge",
+    "summary": "The change correctly stops an expected client validation failure from entering Error Tracking while preserving the returned error and failed import record. The implementation is sound, although the new tests do not directly prove the error-classification branch.",
+    "rootCause": "confirmed",
+    "problems": [
+      {
+        "severity": "minor",
+        "title": "Tests do not exercise log-level classification",
+        "detail": "The litest verifies unchanged public behavior, and the recorder test manually requests info logging. Neither proves that only attachment entity_not_found errors are classified as info by importThreadMessage.",
+        "location": "packages/importers/src/handlers/importRecorder.test.ts:34"
+      }
+    ],
+    "betterFix": "Add focused coverage around the attachment failure classifier, including attachment not-found at info and another error at error."
+  }
+}

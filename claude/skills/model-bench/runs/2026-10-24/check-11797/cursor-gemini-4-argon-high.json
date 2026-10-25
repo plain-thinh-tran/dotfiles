@@ -1,0 +1,26 @@
+{
+  "seat": "cursor-gemini-4-argon-high",
+  "pr": "https://github.com/team-plain/services/pull/11797",
+  "seconds": 760,
+  "error": null,
+  "result": {
+    "verdict": "fix-first",
+    "summary": "The root cause analysis is accurate and lowering the log level for client attachment misses does not change public API behaviour or hide Nango sync failures. However, neither test exercises failResolvedAttachments in importThreadMessage.ts, and other client validation errors on the same import path will still log at error.",
+    "rootCause": "confirmed",
+    "problems": [
+      {
+        "severity": "major",
+        "title": "Tests do not exercise failResolvedAttachments",
+        "detail": "The litest does not assert on log levels and passes with the production change reverted, while the unit test passes { logLevel: 'info' } directly to scope.fail instead of testing importThreadMessage or failResolvedAttachments.",
+        "location": "packages/importers/src/handlers/importRecorder.test.ts:35"
+      },
+      {
+        "severity": "minor",
+        "title": "Other client attachment validation errors still log at error",
+        "detail": "failResolvedAttachments only checks entity_not_found for attachment, so other client validation errors from handlePendingAttachments (such as attachment_not_uploaded, invalid_attachment_type, or invalid_attachment_state) still log 'Failed to import record' at error.",
+        "location": "packages/importers/src/handlers/importThreadMessage.ts:316"
+      }
+    ],
+    "betterFix": "Test importThreadMessage (or failResolvedAttachments) directly to assert that attachment validation errors log at info while unexpected errors still log at error, and downgrade all client validation errors from handlePendingAttachments (or publicError.fromDomainError(error).type === 'validation') rather than only entity_not_found."
+  }
+}

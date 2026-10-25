@@ -2,6 +2,41 @@
 
 Newest first. n is runs per cell; one run is noisy, treat single differences as ties.
 
+## 2026-10-24
+
+CLIs: cursor-agent 2026.10.22-27dcf5f, Claude Code CLI. Seat: Mission Control critical check of Cursor Error Tracking PRs (`src/cursorCheck.ts` in Raumschiff). Same prompt for every seat (`checkPrompt`), each run in an isolated worktree at the PR head with `.mc-check/pr.md` and `.mc-check/diff.patch`, read only (Cursor `--mode ask` cannot run shell, so inputs are files). Bench: `bench/checkSeats.ts` in Raumschiff. PRs one at a time, the 8 seats in parallel. Cases: services #11797 (log level downgrade), #12030 (incident.io paging cap), #11556 (WorkOS 404 as deleted). n=1 per cell.
+
+Grading: a Sonnet verifier per PR listed every distinct claim across the 8 seats and checked it against the code with file:line evidence (TRUE, PARTLY, FALSE), weighted by impact (blocker 4, major 3, minor 2, nit 1, correct root cause call 0.5), and set a reference verdict from evidence only. All three references came out merge (small correct fixes, remaining issues minor or out of scope). Score = 0.7 x (weighted recall of verified claims - 0.1 per false claim) + 0.3 x verdict (exact 1, merge vs fix-first 0.5).
+
+### Critical Check Seat
+
+| Harness | Model | Score | Weighted recall | Verdict | False claims | Time 11797 / 12030 / 11556 |
+|---|---|---|---|---|---|---|
+| Cursor | claude-opus-5-5-high | 54 | 59% | 0.50 (fix-first on all three) | 1 | 150s / 114s / 106s |
+| Claude CLI | opus | 54 | 41% | 0.83 | 0 | 102s / 77s / 77s |
+| Cursor | claude-sonnet-5-5-high | 54 | 52% | 0.67 | 1 | 81s / 70s / 74s |
+| Cursor | composer-2.5 | 50 | 36% | 0.83 | 0 | 78s / 59s / 70s |
+| Cursor | grok-4.7-high | 47 | 41% | 0.67 | 1 | 392s / 330s / 339s |
+| Cursor | cursor-grok-4.6-medium | 45 | 36% | 0.67 | 0 | 126s / 134s / 87s |
+| Cursor | gpt-5.6-sol-high | 44 | 34% | 0.67 | 0 | 102s / 109s / 94s |
+| Cursor | gemini-4-argon-high | 36 | 16% | 0.83 | 0 | 760s / 113s / 211s |
+
+### Findings
+
+1. Opus 5.5 through Cursor found the most verified issues (59% weighted recall) and is the most critical: fix-first on all three PRs the verifier would merge. That bias is what this seat is for; read its problems, not only its verdict.
+2. The same Opus through the Claude CLI flipped its verdict on #11797 between two runs (fix-first on the first live run, merge here), so verdicts are noisy at n=1; recall is the steadier signal.
+3. Sonnet 5.5 through Cursor is the fast runner up (52% recall, 75s average) if Opus through Cursor becomes slow or rate limited.
+4. Gemini 4 Argon, on the Watch list for its leaderboard score, is the weakest here: shallow (2 claims on #12030, 0 problems on #11556) and slow (760s on #11797). Grok 4.7 high is 3x slower than the Claude seats without more recall.
+5. Composer 2.5 is the fastest (69s) and never wrong, but misses about two thirds of what Opus finds.
+
+### Defaults Changed
+
+- New seat, default `cursor:claude-opus-5-5-high` (`DEFAULT_SEAT` in `src/cursorCheck.ts` in Raumschiff, `MC_CHECK_SEAT` overrides). Was Claude CLI Opus before this bench; moved to Cursor for budget at equal score and higher recall.
+
+### Open
+
+- n=1 per cell and one verifier per PR; rerun with more Error Tracking PRs before moving the seat again. A PR the verifier rejects would test whether the merge-leaning seats (Gemini, Composer) miss real blockers.
+
 ## 2026-10-08
 
 CLIs: codex-cli 0.161.0, cursor-agent 2026.10.01-e373342. Review prompt: `prompts/review.md` + prod-ready-check `lenses.md`, effort high unless the id says otherwise. Cursor runs went 10 at a time, so their times include queueing.

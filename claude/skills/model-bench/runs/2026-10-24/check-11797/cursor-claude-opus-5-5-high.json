@@ -1,0 +1,44 @@
+{
+  "seat": "cursor-claude-opus-5-5-high",
+  "pr": "https://github.com/team-plain/services/pull/11797",
+  "seconds": 150,
+  "error": null,
+  "result": {
+    "verdict": "fix-first",
+    "summary": "The traced path is right: client-supplied attachment ids that are missing or belong to another customer return entity_not_found, which the mutation already treats as validation, and only the importer logged it at error. The change silences that one code at one call site, so every other client-input validation failure on this mutation still logs at error, and the tests do not check the new routing.",
+    "rootCause": "confirmed",
+    "problems": [
+      {
+        "severity": "major",
+        "title": "Special-cases one error code",
+        "detail": "Only attachment entity_not_found drops to info. invalid_attachment_state, attachment_not_uploaded, invalid_attachment_type, file size/type and unknown author ids are also client input on this mutation and still log at error, so the next Error Tracking issue is already queued.",
+        "location": "packages/importers/src/handlers/importThreadMessage.ts:316"
+      },
+      {
+        "severity": "major",
+        "title": "Confusing API contract left unaddressed",
+        "detail": "An INBOUND author need not be the thread customer and the schema does not say attachments must be uploaded for the thread customer, so clients get 'Attachment not found' for a file they just uploaded. The likely upstream cause is undocumented and unvalidated.",
+        "location": "packages/core-graphql/src/schema.ts:14677"
+      },
+      {
+        "severity": "minor",
+        "title": "Datadog case not identified",
+        "detail": "The description says the attachment belonged to another customer, but the old log cannot tell that from a missing id. A missing id can also come from an eventually consistent DynamoDB read, which is now logged at info too.",
+        "location": "packages/aggregates/src/attachments/utils/handlePendingAttachments.ts:94"
+      },
+      {
+        "severity": "minor",
+        "title": "Per-call log level on shared recorder",
+        "detail": "A logLevel option on ImportRecorder.fail/recordFailed lets each call site silence errors one at a time instead of using a single classification rule.",
+        "location": "packages/importers/src/handlers/importRecorder.ts:219"
+      },
+      {
+        "severity": "minor",
+        "title": "Tests do not prove the change",
+        "detail": "The litest checks public behaviour that already held before this PR and never checks the log level. The unit test only covers the recorder option, not failResolvedAttachments or the claim that a missing user stays at error.",
+        "location": "lambdas/core-graphql-api/src/imports/importThreadMessagesMutation.litest.ts:430"
+      }
+    ],
+    "betterFix": "On the API import path, log failures at info when publicError.fromDomainError(err).type is 'validation', and keep internal errors at error, instead of special-casing one code. Also document (or validate up front) that attachmentIds must be uploaded for the thread's customer."
+  }
+}

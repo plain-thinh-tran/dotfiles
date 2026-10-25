@@ -1,0 +1,38 @@
+{
+  "seat": "cursor-composer-2.5",
+  "pr": "https://github.com/team-plain/services/pull/12030",
+  "seconds": 59,
+  "error": null,
+  "result": {
+    "verdict": "fix-first",
+    "summary": "Paging caps plausibly reduce list volume per search but leave overlapping queries and 429 retries untouched, so the outage class can recur. The change also shrinks name and empty-query coverage (750/250 incidents) without proving that is acceptable for large workspaces.",
+    "rootCause": "confirmed",
+    "problems": [
+      {
+        "severity": "major",
+        "title": "Stale searches still run",
+        "detail": "Nothing aborts or dedupes prior GraphQL searches when the query changes, so each keystroke can still drive up to three list calls to completion while newer searches start.",
+        "location": "packages/core-graphql/src/threads/links/searchThreadLinkCandidatesQuery.ts:13"
+      },
+      {
+        "severity": "major",
+        "title": "429 retries multiply load",
+        "detail": "Each list page can become up to four HTTP attempts on rate limit, which the PR cites as part of the spike but does not change.",
+        "location": "packages/issue-trackers/src/definitions/incidentio/client.ts:152"
+      },
+      {
+        "severity": "minor",
+        "title": "Shallower name search",
+        "detail": "Non-reference name search stops after three pages (750 newest incidents), so matches beyond that window are silently omitted.",
+        "location": "packages/issue-trackers/src/definitions/incidentio/incidentio.ts:50"
+      },
+      {
+        "severity": "minor",
+        "title": "Tests only lock constants",
+        "detail": "New unit tests assert page counts against mocks; they do not demonstrate rate-limit safety or end-to-end picker behavior under concurrent queries.",
+        "location": "packages/issue-trackers/src/definitions/incidentio/incidentio.test.ts:171"
+      }
+    ],
+    "betterFix": "Stop or ignore superseded searches (client abort or server-side coalescing), and disable or sharply limit 429 retries on incident list GETs; then set page/match limits from the 60/min budget and explicitly cap returned candidates if 25 is the product limit."
+  }
+}

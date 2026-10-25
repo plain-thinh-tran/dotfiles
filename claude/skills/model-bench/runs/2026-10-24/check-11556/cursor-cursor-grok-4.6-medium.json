@@ -1,0 +1,20 @@
+{
+  "seat": "cursor-cursor-grok-4.6-medium",
+  "pr": "https://github.com/team-plain/services/pull/11556",
+  "seconds": 87,
+  "error": null,
+  "result": {
+    "verdict": "merge",
+    "summary": "Workspace deletion already removes the WorkOS organization, then the sync handler deletes it again, so a 404 is the success state. Mapping that 404 and treating it as already deleted matches membership and role deletes and still fails other WorkOS errors.",
+    "rootCause": "confirmed",
+    "problems": [
+      {
+        "severity": "minor",
+        "title": "Tests skip the real WorkOS 404 path",
+        "detail": "The unit test stubs the SDK throw. The litest stubs the client to already return entity_not_found. Neither run wrap then the aggregate together against a live-shaped WorkOS error.",
+        "location": "lambdas/workos-sync-handler/src/handlers/handleWorkspaceDeletedEvent.litest.ts:73"
+      }
+    ],
+    "betterFix": ""
+  }
+}

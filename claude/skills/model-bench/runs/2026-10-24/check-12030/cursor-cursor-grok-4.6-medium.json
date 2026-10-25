@@ -1,0 +1,38 @@
+{
+  "seat": "cursor-cursor-grok-4.6-medium",
+  "pr": "https://github.com/team-plain/services/pull/12030",
+  "seconds": 134,
+  "error": null,
+  "result": {
+    "verdict": "fix-first",
+    "summary": "The empty picker is a rate-limit on uncancelled, retried list walks, not a missing page cap. This only shortens the walk and quietly stops finding older incidents.",
+    "rootCause": "doubtful",
+    "problems": [
+      {
+        "severity": "major",
+        "title": "429 retries still burn the quota",
+        "detail": "The client still retries 429 three times with Retry-After. That is the amplifier the description itself cites, and this change does not touch it.",
+        "location": "packages/issue-trackers/src/definitions/incidentio/client.ts:152"
+      },
+      {
+        "severity": "major",
+        "title": "Overlapping searches still not cancelled",
+        "detail": "Each GraphQL search keeps paging with no abort. Several in-flight queries of three pages plus retries can still exceed 60 list calls a minute.",
+        "location": "packages/issue-trackers/src/definitions/incidentio/incidentio.ts:312"
+      },
+      {
+        "severity": "major",
+        "title": "Name search silently truncated",
+        "detail": "High-volume workspaces lose anything older than 750 incidents, or anything after 25 substring matches, with no API or product note. Failed lists still error-log, so Error Tracking remains if 429s continue.",
+        "location": "packages/issue-trackers/src/definitions/incidentio/incidentio.ts:50"
+      },
+      {
+        "severity": "minor",
+        "title": "Tests restate the new constants",
+        "detail": "They prove 1 vs 3 pages and a 25-match break, not that typing no longer 429s or that the picker still finds real incidents.",
+        "location": "packages/issue-trackers/src/definitions/incidentio/incidentio.test.ts:171"
+      }
+    ],
+    "betterFix": "Stop retrying 429s on this list, fetch one page for typeahead, keep the INC-id lookup, and log remaining 429s as expected rate limits rather than Error Tracking errors."
+  }
+}

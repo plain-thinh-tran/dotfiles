@@ -1,0 +1,13 @@
+{
+  "seat": "cursor-gemini-4-argon-high",
+  "pr": "https://github.com/team-plain/services/pull/11556",
+  "seconds": 211,
+  "error": null,
+  "result": {
+    "verdict": "merge",
+    "summary": "Workspace deletion deletes the WorkOS organization in the deleter DAG and then emits workspace_deleted with the same workosOrganizationId, causing workos-sync-handler to delete it a second time and fail on WorkOS 404. Mapping 404/entity_not_found in deleteOrganization and treating it as already deleted in deleteOrganizationFromWorkOSUnsafe makes organization deletion idempotent without masking real WorkOS errors.",
+    "rootCause": "confirmed",
+    "problems": [],
+    "betterFix": ""
+  }
+}

@@ -1,0 +1,50 @@
+{
+  "seat": "cursor-claude-opus-5-5-high",
+  "pr": "https://github.com/team-plain/services/pull/12030",
+  "seconds": 114,
+  "error": null,
+  "result": {
+    "verdict": "fix-first",
+    "summary": "The diagnosis matches the code: every keystroke refetches the same term-independent incident list and 429s are retried inside a per-minute limit, but the PR only shrinks how many pages each search reads. It leaves the refetching and 429 retries in place, so a team sharing one API key will still hit the limit, and it quietly cuts name search from 2,500 to 750 incidents for a workspace with about 8,000.",
+    "rootCause": "confirmed",
+    "problems": [
+      {
+        "severity": "major",
+        "title": "Same list is refetched on every keystroke",
+        "detail": "The list request ignores the search term, so every debounced query downloads identical pages. A short per-connection cache would remove most calls; capping pages only lowers the cost per keystroke.",
+        "location": "packages/issue-trackers/src/definitions/incidentio/incidentio.ts:312"
+      },
+      {
+        "severity": "major",
+        "title": "429 still retried three times",
+        "detail": "The default retry rule retries 429 with Retry-After: 1, so all retries land in the same 60-per-minute window and use up more of the budget. The PR names this as a cause but leaves it unchanged.",
+        "location": "packages/issue-trackers/src/definitions/incidentio/client.ts:152"
+      },
+      {
+        "severity": "major",
+        "title": "Name search coverage cut from 2,500 to 750",
+        "detail": "The target workspace has around 8,000 incidents (INC-6201, INC-8193 in fixtures), so older incidents can no longer be found by name. The description presents this as preserved behaviour rather than a product trade-off.",
+        "location": "packages/issue-trackers/src/definitions/incidentio/incidentio.ts:50"
+      },
+      {
+        "severity": "minor",
+        "title": "Rate limit is shared across the workspace",
+        "detail": "One Nango connection means one incident.io key for every agent, so 3 calls per non-matching query still runs out at about 20 queries a minute across the team.",
+        "location": ""
+      },
+      {
+        "severity": "minor",
+        "title": "Undisclosed trim change",
+        "detail": "Matching now uses the trimmed term, so whitespace-only queries count as empty and fetch one page. This is not mentioned in the description or covered by a test.",
+        "location": "packages/issue-trackers/src/definitions/incidentio/incidentio.ts:308"
+      },
+      {
+        "severity": "minor",
+        "title": "Tests restate the constants",
+        "detail": "The tests check call counts of 1 and 3 but not matches adding up across pages, the trim change, or any 429 behaviour.",
+        "location": "packages/issue-trackers/src/definitions/incidentio/incidentio.test.ts:171"
+      }
+    ],
+    "betterFix": "Cache the list pages per connection for about a minute and filter in memory, and don't retry 429 on this interactive path; return a rate-limited error instead. Then keep the wider coverage, since it no longer costs extra calls."
+  }
+}

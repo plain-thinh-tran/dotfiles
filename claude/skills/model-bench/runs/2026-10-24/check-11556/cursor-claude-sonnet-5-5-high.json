@@ -1,0 +1,38 @@
+{
+  "seat": "cursor-claude-sonnet-5-5-high",
+  "pr": "https://github.com/team-plain/services/pull/11556",
+  "seconds": 74,
+  "error": null,
+  "result": {
+    "verdict": "merge",
+    "summary": "A WorkOS 404 on organization delete is an expected condition: the deleter step removes the organization, then the sync handler deletes it again. The fix maps only 404 to entity_not_found and treats that as success, matching the membership and role deletes, while other errors still fail.",
+    "rootCause": "confirmed",
+    "problems": [
+      {
+        "severity": "minor",
+        "title": "Two owners of the same delete",
+        "detail": "The deleter step and the workspace_deleted handler both delete the same WorkOS organization. The PR makes both idempotent instead of picking one owner, which is acceptable but leaves the redundancy.",
+        "location": "packages/deleter/src/deleters/deleteWorkspace.ts:271"
+      },
+      {
+        "severity": "minor",
+        "title": "Source of the Datadog error not proven",
+        "detail": "The error text comes from the shared aggregate log, so it could come from the deleter retry or the handler. The description blames only the handler without a trace. Both paths are fixed anyway.",
+        "location": "packages/aggregates/src/workos/workosAggregate.ts:497"
+      },
+      {
+        "severity": "minor",
+        "title": "Tests do not join the layers",
+        "detail": "The unit test mocks the SDK and the litest mocks the WorkOS client. No test goes from a real 404 through the client mapping and the aggregate to the handler result.",
+        "location": "lambdas/workos-sync-handler/src/handlers/handleWorkspaceDeletedEvent.litest.ts:73"
+      },
+      {
+        "severity": "minor",
+        "title": "Any 404 counts as deleted",
+        "detail": "A wrong organization ID or the wrong WorkOS environment would now be reported as already deleted. This is the same trade-off the membership and role deletes already make.",
+        "location": "packages/workos/src/api.ts:288"
+      }
+    ],
+    "betterFix": "Keep this change. Optionally have one place own the WorkOS organization delete (deleter step or event handler), or add a litest that goes from the deleter step to the sync handler."
+  }
+}

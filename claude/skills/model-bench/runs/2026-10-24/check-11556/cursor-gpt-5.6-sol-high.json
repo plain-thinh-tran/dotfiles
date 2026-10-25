@@ -1,0 +1,32 @@
+{
+  "seat": "cursor-gpt-5.6-sol-high",
+  "pr": "https://github.com/team-plain/services/pull/11556",
+  "seconds": 94,
+  "error": null,
+  "result": {
+    "verdict": "fix-first",
+    "summary": "The missing-organization handling is correct, but the PR leaves the deterministic duplicate deletion in place. Remove the legacy deletion step and keep the idempotency protection for event retries.",
+    "rootCause": "confirmed",
+    "problems": [
+      {
+        "severity": "major",
+        "title": "Root cause remains",
+        "detail": "The workspace deleter still deletes the organization before emitting an event whose handler deletes it again. The PR silences the resulting second-delete failure but retains the redundant WorkOS request.",
+        "location": "packages/deleter/src/deleters/deleteWorkspace.ts:276"
+      },
+      {
+        "severity": "minor",
+        "title": "Description overstates the failure",
+        "detail": "The workspace row is deleted and the event emitted before the sync handler runs. It is the subscriber delivery that retries, not workspace deletion itself.",
+        "location": "packages/aggregates/src/workspace/workspaceAggregate.ts:1044"
+      },
+      {
+        "severity": "minor",
+        "title": "Handler test can pass without deletion",
+        "detail": "The test only checks for an Ok result and does not assert that deleteOrganization received the expected ID or that a non-not-found error remains an error.",
+        "location": "lambdas/workos-sync-handler/src/handlers/handleWorkspaceDeletedEvent.litest.ts:73"
+      }
+    ],
+    "betterFix": "Remove the WorkOS organization step from the workspace deleter so the event handler is the single owner. Retain the 404 handling because at-least-once delivery can still retry after a successful deletion."
+  }
+}

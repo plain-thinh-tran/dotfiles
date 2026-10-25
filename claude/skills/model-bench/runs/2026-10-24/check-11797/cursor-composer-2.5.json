@@ -1,0 +1,32 @@
+{
+  "seat": "cursor-composer-2.5",
+  "pr": "https://github.com/team-plain/services/pull/11797",
+  "seconds": 78,
+  "error": null,
+  "result": {
+    "verdict": "merge",
+    "summary": "The incident is mis-leveled logging on an expected attachment validation path, not a broken import; lowering that recorder log to info matches aggregate behaviour and leaves the API unchanged. The change is still observability-only and blunts error tracking for every attachment not_found on import, not just cross-customer cases, without aligning other client not_found import failures.",
+    "rootCause": "confirmed",
+    "problems": [
+      {
+        "severity": "major",
+        "title": "Error tracking silencing",
+        "detail": "Any attachment entity_not_found from resolveAttachments (missing id or wrong customer) is logged at info on 'Failed to import record', so integration mistakes may stop paging even though behaviour is unchanged.",
+        "location": "packages/importers/src/handlers/importThreadMessage.ts:316"
+      },
+      {
+        "severity": "minor",
+        "title": "Inconsistent import logging policy",
+        "detail": "Author/customer entity_not_found and other validation errors still hit recordFailed at error, while only attachment entity_not_found is special-cased.",
+        "location": "packages/importers/src/handlers/importThreadMessage.ts:433"
+      },
+      {
+        "severity": "minor",
+        "title": "Tests overclaim logging",
+        "detail": "The litest proves API outcomes only; info-level logging is covered solely by importRecorder.test.ts, not end-to-end import.",
+        "location": "lambdas/core-graphql-api/src/imports/importThreadMessagesMutation.litest.ts:430"
+      }
+    ],
+    "betterFix": "Consider keying recordFailed log severity on error.category (e.g. NOT_FOUND → info) for all import client validation failures, or a Datadog exclusion on this message plus err.code, instead of an attachment-only special case."
+  }
+}

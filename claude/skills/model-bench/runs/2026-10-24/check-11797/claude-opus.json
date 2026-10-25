@@ -1,0 +1,38 @@
+{
+  "seat": "claude-opus",
+  "pr": "https://github.com/team-plain/services/pull/11797",
+  "seconds": 102,
+  "error": null,
+  "result": {
+    "verdict": "merge",
+    "summary": "Logging a client supplied attachment miss at info is consistent with repo logging rules and changes no public behaviour. The claimed cause is not evidenced, and a possible contract gap (INBOUND author can be a different customer than the thread, but attachments are checked against the thread customer) goes uninvestigated.",
+    "rootCause": "doubtful",
+    "problems": [
+      {
+        "severity": "major",
+        "title": "Possible API contract gap now silenced",
+        "detail": "INBOUND authors are not required to be the thread customer, yet attachments are validated against thread.customerId and rejected as 'not found'; clients uploading for the author customer hit this with no documented rule.",
+        "location": "packages/importers/src/handlers/importThreadMessage.ts:386"
+      },
+      {
+        "severity": "minor",
+        "title": "Root cause asserted without evidence",
+        "detail": "entity_not_found/attachment covers both a missing id and another customer's attachment; the PR shows no Datadog logs proving which branch fired.",
+        "location": "packages/aggregates/src/attachments/utils/handlePendingAttachments.ts:107"
+      },
+      {
+        "severity": "minor",
+        "title": "Downgrade keyed on error shape, not source",
+        "detail": "Any future entity_not_found/attachment from the Nango sync path would also drop to info; today that path converts not found to skips, so the risk is latent.",
+        "location": "packages/importers/src/handlers/importThreadMessage.ts:323"
+      },
+      {
+        "severity": "minor",
+        "title": "Decision logic untested",
+        "detail": "Tests cover the recorder option and existing API behaviour, not failResolvedAttachments choosing info vs error.",
+        "location": "packages/importers/src/handlers/importRecorder.test.ts:45"
+      }
+    ],
+    "betterFix": "Keep the log change, but confirm in Datadog which branch fires; if clients upload for the message author, either validate attachments against the author customer or document the thread customer requirement and return a specific error instead of not_found."
+  }
+}

@@ -1,0 +1,44 @@
+{
+  "seat": "cursor-claude-sonnet-5-5-high",
+  "pr": "https://github.com/team-plain/services/pull/12030",
+  "seconds": 70,
+  "error": null,
+  "result": {
+    "verdict": "fix-first",
+    "summary": "The cause is real: uncancelled 10-page walks per keystroke burn incident.io's 60-per-minute list limit. The PR only shrinks the walk, so 429s and the Error Tracking issue still occur. It also cuts name-search coverage to 750 incidents without saying so plainly, and the tests don't exercise a 429.",
+    "rootCause": "confirmed",
+    "problems": [
+      {
+        "severity": "major",
+        "title": "Symptom reduced, not fixed",
+        "detail": "A 429 still gives an empty picker and an error-level log, only less often. The limit is shared per workspace connection, and 3 pages per query can still exceed 60 per minute.",
+        "location": "packages/issue-trackers/src/definitions/incidentio/incidentio.ts:46"
+      },
+      {
+        "severity": "major",
+        "title": "Silent loss of search coverage",
+        "detail": "Name search drops from the newest 2,500 incidents to 750. Older incidents become unfindable by name, and the description says it 'still covers' them.",
+        "location": "packages/issue-trackers/src/definitions/incidentio/incidentio.ts:49"
+      },
+      {
+        "severity": "major",
+        "title": "429 treated as an internal error",
+        "detail": "A rate limit is an expected condition but is logged at error and mapped to internalError, so Error Tracking keeps firing. Nothing returns a rate-limited domain error or a partial result.",
+        "location": "packages/issue-trackers/src/definitions/incidentio/client.ts:226"
+      },
+      {
+        "severity": "minor",
+        "title": "Tests restate the implementation",
+        "detail": "The page-count tests assert the constant. No test covers a 429 or concurrent queries, search terms with whitespace, or a match that only exists beyond page 3.",
+        "location": "packages/issue-trackers/src/definitions/incidentio/incidentio.test.ts:215"
+      },
+      {
+        "severity": "minor",
+        "title": "Unrelated and misleading changes",
+        "detail": "The term is now trimmed before matching, which changes behaviour. The helper extraction and cursor rewrite are churn. SEARCH_MATCH_LIMIT does not cap the number of results, only when paging stops.",
+        "location": "packages/issue-trackers/src/definitions/incidentio/incidentio.ts:304"
+      }
+    ],
+    "betterFix": "Cache the incident list briefly per connection and share one in-flight list call across concurrent searches, so typing does not multiply calls. Map 429 to an expected rate-limited domain error (logged below error, or returning the cached or partial list) instead of internalError. If a page cap stays, state the coverage cut openly and keep the existing cap unless the team accepts it."
+  }
+}

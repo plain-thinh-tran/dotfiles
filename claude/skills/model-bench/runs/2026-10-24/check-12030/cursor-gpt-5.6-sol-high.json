@@ -1,0 +1,32 @@
+{
+  "seat": "cursor-gpt-5.6-sol-high",
+  "pr": "https://github.com/team-plain/services/pull/12030",
+  "seconds": 109,
+  "error": null,
+  "result": {
+    "verdict": "fix-first",
+    "summary": "The PR reduces request volume but does not control the request storm. It also silently removes valid older name-search results.",
+    "rootCause": "confirmed",
+    "problems": [
+      {
+        "severity": "major",
+        "title": "Older incidents become undiscoverable",
+        "detail": "Name search previously inspected 2,500 incidents but now inspects at most 750, or fewer after common matches. Exact-reference lookup does not preserve searches where the user only knows an older incident's name.",
+        "location": "packages/issue-trackers/src/definitions/incidentio/incidentio.ts:309"
+      },
+      {
+        "severity": "major",
+        "title": "Rate-limit cause remains",
+        "detail": "Overlapping invocations are still independent and each may make three list calls; a 429 is still retried three times. This lowers the likelihood of failure but provides no coordination, caching, or hard request budget.",
+        "location": "packages/issue-trackers/src/definitions/incidentio/client.ts:151"
+      },
+      {
+        "severity": "minor",
+        "title": "Tests only restate loop limits",
+        "detail": "The new tests assert one, three, or 25 using static mocks. They do not reproduce concurrent queries, exercise 429 retries, or expose the lost match beyond page three.",
+        "location": "packages/issue-trackers/src/definitions/incidentio/incidentio.test.ts:171"
+      }
+    ],
+    "betterFix": "Deduplicate or briefly cache incident scans per connection so successive debounced terms reuse the same pages, and avoid retrying 429s when the shared minute quota is exhausted. Preserve existing search coverage unless a reduced window is an explicit product decision."
+  }
+}

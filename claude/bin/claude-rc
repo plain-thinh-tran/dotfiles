@@ -16,7 +16,7 @@ PREFIX = "claude-rc-"
 
 os.makedirs(CHANNEL, exist_ok=True)
 env = dict(os.environ, CLAUDE_RC_CHANNEL=CHANNEL, OPEN_PLAN_ANNOTATOR_SKIP_FILE=SKIP)
-MODS = [os.path.expanduser(p) for p in ("~/dotfiles/claude/mods/mission-control",) if os.path.isdir(os.path.expanduser(p))]
+MODS = [os.path.expanduser(p) for p in ("~/personal/repos/Raumschiff/mod",) if os.path.isdir(os.path.expanduser(p))]
 if MODS:
     env["CLAUDE_CODE_PLUGIN_DIRS"] = os.pathsep.join([*filter(None, [env.get("CLAUDE_CODE_PLUGIN_DIRS")]), *MODS])
 child = subprocess.Popen([REAL, *sys.argv[1:]], stdin=subprocess.PIPE, stdout=subprocess.PIPE, env=env)
