@@ -3,6 +3,7 @@
 
 Denies a create unless it targets team Platform with a project id, a priority (1-4), and at least one
 label, and denies any create from a git repo whose origin is not under team-plain. Denies an update that moves the issue off Platform or clears its project, priority, or labels.
+Denies a title or description that breaks the ticket writing rules in SKILL.md.
 """
 
 import json
@@ -13,6 +14,39 @@ import sys
 PLATFORM_TEAM = {"platform", "pe", "2e5d1dbd-84da-4f36-902a-e3291deaa73b"}
 PROJECT_ID = re.compile(r"^(P-[A-Z]+-\d+|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$")
 SKILL = "Follow ~/.claude/skills/create-linear-issue/SKILL.md."
+MAX_TITLE_WORDS = 14
+MAX_DESCRIPTION_WORDS = 150
+BANNED_LINES = [
+    (re.compile(r"^\s*```"), "no code blocks"),
+    (re.compile(r"^\s*\|"), "no tables"),
+    (re.compile(r"^\s*#"), "no headings"),
+]
+LOCAL_PATH = re.compile(r"(/Users/|~/)")
+
+
+def problems_in_text(args):
+    problems = []
+    if "title" in args and len(str(args["title"] or "").split()) > MAX_TITLE_WORDS:
+        problems.append(f"title must be at most {MAX_TITLE_WORDS} words")
+    if "description" not in args:
+        return problems
+    description = str(args["description"] or "")
+    words = len(description.split())
+    if words == 0:
+        problems.append("description is required")
+        return problems
+    if words > MAX_DESCRIPTION_WORDS:
+        problems.append(
+            f"description is {words} words, the limit is {MAX_DESCRIPTION_WORDS}; cut implementation detail or split the ticket"
+        )
+    if not re.search(r"^done when:", description, re.IGNORECASE | re.MULTILINE):
+        problems.append('description needs a "Done when:" section')
+    for pattern, rule in BANNED_LINES:
+        if any(pattern.match(line) for line in description.splitlines()):
+            problems.append(rule)
+    if LOCAL_PATH.search(description):
+        problems.append("no local paths")
+    return problems
 
 
 def origin_url(cwd):
@@ -40,7 +74,9 @@ def problems_on_create(args, cwd):
         problems.append("priority must be 1 (urgent), 2 (high), 3 (medium) or 4 (low)")
     if not (args.get("labels") or args.get("addLabels")):
         problems.append("at least one label is required")
-    return problems
+    if "description" not in args:
+        problems.append("description is required")
+    return problems + problems_in_text(args)
 
 
 def problems_on_update(args):
@@ -55,7 +91,7 @@ def problems_on_update(args):
         problems.append("priority cannot be cleared")
     if "labels" in args and not args["labels"]:
         problems.append("labels cannot be cleared")
-    return problems
+    return problems + problems_in_text(args)
 
 
 def main():

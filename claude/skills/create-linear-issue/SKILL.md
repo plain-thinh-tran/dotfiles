@@ -15,7 +15,8 @@ Only create issues for work in team-plain repos (origin under `team-plain/`); ne
 3. For the reactive project, pick a milestone: `list_milestones` with the project id. Use the one that matches (Error Tracking Issues, Datadog, Cost Reduction, Customer Request, CI/CD Fix, Code Refactor, Security Patch); skip it when none fits.
 4. Pick labels: `list_issue_labels` with `team: "Platform"`, `limit: 250`. Ignore groups and labels with `retiredAt`. Use `Bug` or `Papercut` for broken behavior, the matching `System` child (e.g. `CI/CD`, `Email`), and the `repo` child for the repo the change lands in (e.g. `team-plain/services`). A group allows one child, so never pass two `System` or two `repo` labels.
 5. Pick priority: 1 urgent for customer facing breakage or incidents, 2 high for work blocking someone this week, 3 medium by default, 4 low for cleanup that can wait.
-6. Create it with `save_issue`:
+6. Write the title and description per [Writing the Ticket](#writing-the-ticket).
+7. Create it with `save_issue`:
 
 ```json
 {
@@ -31,3 +32,29 @@ Only create issues for work in team-plain repos (origin under `team-plain/`); ne
 ```
 
 Always pass ids for project and milestone: every team has a project named `Reactive Work Q<n>W<n>`, so names are ambiguous and the MCP rejects them. The result carries the identifier (e.g. `PE-1234`); pass it to `create-pr.sh -l`.
+
+## Writing the Ticket
+
+A ticket states the problem and the contract; the coding agent picks the implementation. A reader gets the whole idea in under a minute.
+
+Title: the observable outcome or failure, present tense, at most 14 words. `Make adding workspaces to an existing WorkOS hub safe`.
+
+Description, at most 150 words, in this shape:
+
+```
+<What is wrong and who feels it, with one number, customer or thread as evidence. Name any invariant a naive fix would break (data loss, access, ordering, deploy gating).>
+
+Done when:
+
+* <1 to 4 observable checks, phrased as behaviour>
+
+Out of scope: <optional, the tempting neighbouring work, with its issue id>
+```
+
+Keep in the ticket: the symptom, its impact, invariants, observable done checks, one evidence link, the customer or Plain thread ref.
+
+Leave for the PR and the agent: file paths, function names, patch plans, test commands, local branches or commits, reviewer names, full measurement tables. Investigation notes go in a comment on the issue after it exists.
+
+Work that needs more than 150 words is usually several tickets: split it, one outcome each.
+
+Reference: PE-1413 (419 words cut to 144).
