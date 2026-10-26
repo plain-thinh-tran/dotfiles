@@ -4,13 +4,14 @@
 #   debate.sh items <context-dir>                 number findings into debate/items.json (C* Claude, X* Codex, G* Grok)
 #   debate.sh round <context-dir> <n> <peer>      peer (codex|grok) positions for round n -> debate/round-<n>.<peer>.json
 #   debate.sh tally <context-dir> <n>             merge all positions -> debate/tally-<n>.json
-# Env: see peers.sh
+# Env: see peers.sh; LENSES_FILE overrides lenses.md (check-code-quality uses its own)
 set -euo pipefail
 
 CMD="${1:?usage: debate.sh items|round|tally <context-dir> [round] [peer]}"
 CTX="$(cd "${2:?context dir required}" && pwd)"
 SKILL_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SKILL_DIR/peers.sh"
+LENSES="${LENSES_FILE:-$SKILL_DIR/lenses.md}"
 DEBATE="$CTX/debate"
 MAX_ROUNDS=3
 REVIEWERS=(claude codex grok)
@@ -52,7 +53,7 @@ Read only: never edit files, never push, never call GitHub.
 Material:
 - All findings, numbered: $DEBATE/items.json (C* Claude's, X* Codex's, G* Grok's; the owner field says whose)
 - Diff: $CTX/diff.patch. PR head is git ref pr-$PR, base is origin/$BASE. Read code only with git show pr-$PR:<path> or git show origin/$BASE:<path>, never from the working tree (a different branch), and cite locations as plain path:line with no ref prefix.
-- Review lenses: $SKILL_DIR/lenses.md
+- Review lenses: $LENSES
 - Diffs of related PRs in other repos, if any: $CTX/external/
 $PRIOR
 $SCOPE
