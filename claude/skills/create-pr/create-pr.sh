@@ -198,7 +198,7 @@ if [ -n "$ERROR_URL" ]; then
 
 ## Why
 
-<!-- Root cause in one plain sentence, then the diagram that best shows the flow, then numbered steps walking it. See ~/dotfiles/PR-DESCRIPTION-STYLE.md. -->
+<!-- "This PR lets/makes <outcome>." Then the problem today in one plain sentence, the diagram, and two or three bullets. See ~/dotfiles/PR-DESCRIPTION-STYLE.md. -->
 BODYEOF
 )
 elif [ -n "$LINEAR_ID" ]; then
