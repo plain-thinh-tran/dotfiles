@@ -29,6 +29,7 @@ Material:
 - Report every location as plain path:line with no ref prefix (not pr-$PR:path).
 - Compare against origin/$BASE. Local branches are stale.
 - Diffs of related PRs in other repos, if any: $CTX/external/
+$( [ -f "$CTX/scout.md" ] && echo "- Map of callers, consumers, tests and siblings from a scout (leads, verify before relying on them): $CTX/scout.md" )
 
 Trace every changed file to what it replaces and what consumes it (callers, other stacks, readers of outputs, schemas, env vars), and compare old and new behaviour attribute by attribute. Back external facts with library or provider source in the repo's node_modules or vendor docs you already know, and say which.
 
