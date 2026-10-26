@@ -65,7 +65,7 @@ Stances:
 Rules:
 - Verify against the code before answering. Do not defer to the others to reach consensus, and do not defend a position the code contradicts.
 - Out of scope, always disagree: CI results, merge status, approvals, PR process, style, naming, formatting.
-- dead-code needs a repo wide search showing nothing reaches it. refactor needs a named existing helper or documented repo pattern.
+- dead-code needs a repo wide search showing nothing reaches it. refactor needs the evidence the review lenses ask for: a named existing helper or documented repo pattern, or whatever else the lenses accept.
 - Two items with the same root cause: take the same stance on both and name the other id in reason; the report merges them.
 - evidence names the file:line, search, or source you checked. revised_fix is null unless stance is revise and the fix changes.
 EOF

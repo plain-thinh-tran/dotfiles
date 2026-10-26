@@ -1,6 +1,6 @@
 ---
 name: check-code-quality
-description: Review a PR for code smells and light refactors only (reuse of existing helpers, repetition, dead code, structure, repo conventions), never logic, with Claude, Codex and Grok reviewing blind and then debating, and apply the agreed fixes on request. Use when asked to check code quality, find code smells, or suggest refactors for a PR.
+description: Review a PR for code smells and light refactors only (reinvented wheels, repo precedent, repetition, bloat, dead code, structure, conventions), never logic, with Claude, Codex and Grok reviewing blind and then debating, and apply the agreed fixes on request. Use when asked to check code quality, find code smells, or suggest refactors for a PR.
 ---
 
 # Check Code Quality
@@ -13,8 +13,8 @@ This skill reuses prod-ready-check's scripts. Below, `PRC=~/.claude/skills/prod-
 
 1. **Gather.** From a clone of the PR's repo, run `$PRC/gather.sh <pr-number|pr-url> -o <context-dir>`. It writes `summary.md`, `diff.patch` and `meta.json`, and fetches the PR head to the ref `pr-<N>`. Read code only from `pr-<N>` and `origin/<base>`; workspace branches are stale. Done when the summary prints.
 2. **Scout.** Send two Haiku scouts in parallel (Agent tool, `model: "haiku"`, `subagent_type: "Explore"`), splitting the changed files between them. Each returns file:line evidence only, read with `git show`:
-   - existing helpers, components, hooks and constants the changed code duplicates or could reuse, with every occurrence;
-   - shared repo precedents for the same shape (a key factory, a shared menu, a drag wrapper);
+   - for every helper, hook, component, constant or type the PR adds, the closest existing one, with its caller count;
+   - for every pattern the PR uses (menus, drag and drop, query keys, error toasts), the repo's standard implementation and its call sites;
    - callers of every export the PR adds;
    - the base version of each changed file.
 
