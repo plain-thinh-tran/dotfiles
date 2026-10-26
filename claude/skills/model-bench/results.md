@@ -2,6 +2,42 @@
 
 Newest first. n is runs per cell; one run is noisy, treat single differences as ties.
 
+## 2026-10-26
+
+CLIs: Claude Code 2.1.310, cursor-agent 2026.10.22-27dcf5f, codex-cli 0.164.0. Seat: Raumschiff project chat (`src/projectChat.ts`): read only, short reply plus a json block of project actions (setNotes, addDecision, deleteDecision, addPrs, upsertTerm, deleteTerm). Bench: `bench/chatSeats.ts` in Raumschiff, 15 scripted cases on a fixture project (Q&A in Master and Area context, notes append/remove/rewrite keeping every line, decisions with area refs, delete by description, ambiguous delete that must ask, multi action, "don't change anything", two turn memory through the harness's resume). Graded automatically through the real `parseChatOutput` and `applyChatActions`; n=2 per cell. Two grader artifacts counted as passes ("under 1 second" for "1s", a clarifying question without "?").
+
+### Project Chat Seat
+
+All seats get the files inlined in the prompt and a clean env; Claude seats run lean (`--setting-sources project --strict-mcp-config`).
+
+| Harness | Model | Pass /30 | Median turn | Cost / turn | Misses |
+|---|---|---|---|---|---|
+| Claude CLI | haiku | 30 | 4s | ~$0.002 | none |
+| Claude CLI | sonnet | 30 | 3s | ~$0.027 | none |
+| Cursor | muse-spark-1.3-low | 30 | 9s | subscription | none |
+| Cursor | composer-2.5 | 28 | 10s | subscription | deleted on the ambiguous delete instead of asking (both runs) |
+| Cursor | gpt-5.6-luna-low | 27 | 9s | subscription | ambiguous delete (both), lost the resumed turn once |
+| Codex CLI | gpt-6-luna low | 27 | 3s | subscription | ambiguous delete, area ref, a multi action message did nothing |
+| Claude CLI | haiku, files read with tools | 28 | 6s | ~$0.0025 | left decision refs empty (both) |
+| Claude CLI | sonnet, shipped first version (files read with tools, full user settings) | 30 | 10s (26s with the mod poll) | ~$0.16 | none |
+| Cursor | claude-haiku-5-5-medium (round 1, files read with tools) | 18/20 | 12s | subscription | Ask mode told it it cannot save, so the resumed turn never acted |
+
+### Findings
+
+1. The harness mattered more than the model. Inlining the few KB of project files removed the Read round trips; lean flags cut context from ~100k to ~16k tokens (no user CLAUDE.md, plugins, hooks or MCP servers, so no caveman replies either). Together: Sonnet from ~$0.16 to ~$0.027 a turn, Haiku ~$0.002.
+2. Every headless `claude -p` the Raumschiff server ran waited ~25s on exit: the server inherited a Conductor `CONDUCTOR_SESSION_ID`, so the mod loaded and long polled that session's work. Fixed by stripping it in `runCommand` (`cleanEnv`).
+3. Codex cannot read files without shell, and the prompt forbids commands, so it fails every file case until the files are inline.
+4. The ambiguous delete separates the seats: Haiku, Sonnet and Muse Spark asked which decision; Composer, Luna and Codex Luna deleted one.
+5. Cursor returned `[unavailable]` for a whole batch when four Cursor seats ran in parallel; reran them one at a time.
+
+### Defaults Changed
+
+- Project chat: `claude:haiku` (`chatModel()` in `src/projectChat.ts`, `MC_CHAT_MODEL` overrides), lean flags and inline files. Was `claude:sonnet` reading the files with tools.
+
+### Open
+
+- The fixture project is small; rerun with a project of real size (long notes, 20+ PRs) before trusting Haiku on big rewrites.
+
 ## 2026-10-24
 
 CLIs: cursor-agent 2026.10.22-27dcf5f, Claude Code CLI. Seat: Mission Control critical check of Cursor Error Tracking PRs (`src/cursorCheck.ts` in Raumschiff). Same prompt for every seat (`checkPrompt`), each run in an isolated worktree at the PR head with `.mc-check/pr.md` and `.mc-check/diff.patch`, read only (Cursor `--mode ask` cannot run shell, so inputs are files). Bench: `bench/checkSeats.ts` in Raumschiff. PRs one at a time, the 8 seats in parallel. Cases: services #11797 (log level downgrade), #12030 (incident.io paging cap), #11556 (WorkOS 404 as deleted). n=1 per cell.

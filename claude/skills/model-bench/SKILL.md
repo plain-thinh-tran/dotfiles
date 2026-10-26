@@ -17,6 +17,7 @@ A fixed benchmark over real Plain code, so a model choice rests on what a model 
 | Scout | avengers step 1 | `avengers/SKILL.md` |
 | Build worker | avengers step 4 | `avengers/SKILL.md` |
 | Critical check | Mission Control, Cursor Error Tracking PRs | `src/cursorCheck.ts` in the Raumschiff repo (`~/personal/repos/Raumschiff`) (`DEFAULT_SEAT`); bench with `bench/checkSeats.ts` |
+| Project chat | Raumschiff project chat (Master and Area views) | `src/projectChat.ts` in the Raumschiff repo (`chatModel()`, `MC_CHAT_MODEL`); bench with `bench/chatSeats.ts <out> <harness:model,...> [reps] [cases]` |
 
 Keep three different model families in the reviewer seats. The benchmark exists because one family alone misses bugs another catches (see `results.md`).
 
