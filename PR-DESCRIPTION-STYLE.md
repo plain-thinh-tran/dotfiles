@@ -5,31 +5,40 @@ The description is lean: a reviewer reads it in under a minute and understands t
 Shape:
 
 1. The `> Fixes` line (the script writes it).
-2. What changed, in one sentence.
-3. `## Why`: what this PR brings, then what happens today without it, then a diagram, then two or three bullets.
-4. One line on how it was checked, when it was checked against a real environment (plain:live, dev-uk).
-5. `## Rollout`, only when something must happen before merge or after deploy: one bullet per action, tagged `Before merge:` or `After deploy:`.
+2. What changed, in one sentence: the outcome for users or the system, not the code.
+3. The terms a reader needs for the rest, as bullets right under that sentence.
+4. `## Why`: what this PR unlocks, in one or two plain sentences.
+5. `## Changes`: the `Before` and `Now` lines, then one line on what stays the same.
+6. One line on how it was checked, when it was checked against a real environment (plain:live, dev-uk).
+7. `## Rollout`, only when something must happen before merge or after deploy: one bullet per action, tagged `Before merge:` or `After deploy:`.
 
-`## Why` opens with "This PR lets/makes …": the outcome for users or the system, not the code. The next sentence is the problem today, in plain words. The bullets say where the change applies and which edge cases it handles, one sentence each. They are not implementation steps: no function names, no removed helpers, no settings the reviewer does not have to act on. For a race or a multi actor flow, the numbered steps that walk a sequence diagram still replace the bullets.
+Say each fact once. The `Before` line already shows what breaks today, so `## Why` does not restate it, and the summary sentence already says what changed, so `## Changes` does not either.
+
+The terms come first so every later section reads without a lookup. One bullet per non trivial term (domain language, internal names like "debt", "cold sync", "hub role"), in quotes, with its plain meaning and a concrete example value. Keep it to the one to three terms the summary and the `Before` and `Now` lines actually use. Skip terms any Plain engineer knows, and terms the diagram already makes obvious (a process name like "membership sync" needs no definition when the diagram shows what it does).
+
+`## Why` justifies the PR from the goal it serves: what it lets us or the customer do next, and why that matters. Link the parent PR or project only when the reviewer has to open it to follow. No diagram, no bullets.
+
+`## Changes` is the `Before` and `Now` lines in a code block, one pair per behaviour that changed; mark each broken `Before` with `✗` and the error. Under it, one plain sentence on the scope that stays the same (which customers, orgs or paths see no difference). Add bullets only for an edge case a reviewer would get wrong without being told; edge cases the Evidence line or the tests already prove stay out. Never implementation steps: no function names, no removed helpers, no settings the reviewer does not have to act on. For a race or a multi actor flow, a sequence diagram follows the `Before` and `Now` lines, with numbered steps walking it.
+
+Every sentence says what the system now does with what. No vague verbs ("leave alone", "handle", "support", "safely", "respect"): a reader can take "sync leaves hub roles alone" to mean sync stops touching the org. Write "sync ignores hub roles and still applies the workspace role" instead. When a sentence names a component, say which part of its behaviour changed and which part stays.
 
 Plain words describe what happens, not which function does it. Name code only where the reviewer needs it to find their way. Investigation detail (log trails, event counts, queries, prod lookups) lives in the Linear issue. Add evidence, rollout, backfill, follow ups or test notes only when the reviewer needs them to trust or ship the change.
 
-When the change is a new rule or data shape rather than a broken flow, keep `## Why` to the outcome and problem sentences plus the two or three points a reviewer must hold in their head (the defaults, the limits). Leave what the diff already shows (which layers carry a field, event defaults, permission checks, error codes) to the diff. Then show the rule applied to one real case from production, with the actual values in place, and end with one sentence on what that means for a user.
+When the change is a new rule or data shape rather than a broken flow, keep `## Changes` to the two or three points a reviewer must hold in their head (the defaults, the limits). Leave what the diff already shows (which layers carry a field, event defaults, permission checks, error codes) to the diff. Then show the rule applied to one real case from production, with the actual values in place, and end with one sentence on what that means for a user.
 
 ## Picking the Diagram
 
-Choose the diagram that shows the reviewer the flow that breaks:
+The `Before` and `Now` lines are the default diagram. Add a bigger one under them only when two lines cannot show the flow that breaks:
 
 | Flow | Diagram |
 |------|---------|
 | Actors exchanging calls over time (races, retries, ordering) | Sequence: one column per actor, arrows top to bottom |
-| One path whose behaviour changed | Before and after, two short blocks |
 | Data moving through stages | Pipeline: `a → b → c` |
 | An entity moving between states | State transitions |
 | A ranking or ordering | Ranked list, highest first, with the values in the left column |
 | The same structure for several customers | Side by side columns, shared rows aligned across them |
 
-Skip it when the one sentence why already shows the flow. Draw with box characters (`│ ─ ┼ ▶ ◀`), keep columns aligned (generate it with a short script once arrows cross columns), and annotate the failing arrow at the end of its line with `✗` and the error. Show nesting with `├─` and `└─` indented under the parent.
+Draw with box characters (`│ ─ ┼ ▶ ◀`), keep columns aligned (generate it with a short script once arrows cross columns), and annotate the failing arrow at the end of its line with `✗` and the error. Show nesting with `├─` and `└─` indented under the parent.
 
 Prefer an ASCII block over a markdown table whenever a cell would need a list or `<br>`. A note that is only a reminder for Thinh is a sentence, not a table.
 
@@ -50,19 +59,23 @@ Ranked list example:
 ````markdown
 > Fixes [LINEAR-ID](linear url)
 
-<What changed, one sentence.>
+Plain now picks the highest priority role when the IdP gives someone several.
+
+- A "role slug" is the id WorkOS sends Plain for a role, like `viewer` or `billing-team`, mapped from the customer's IdP groups.
+- A "priority" is a number on each Plain role, from Owner 5000 down to None 1000. The highest one wins.
 
 ## Why
 
-This PR lets Plain decide which role wins when the IdP gives someone several. Today WorkOS decides, and it ranks every new custom role below Viewer, so a user in both a Viewer group and a custom role group lands on Viewer.
+Customers manage access through IdP groups, so a user in a Viewer group and a custom role group has to end up on the custom role for custom roles to be usable at all.
+
+## Changes
 
 ```
 Before   WorkOS ── role  = viewer ────────────────────────────────────▶ Plain: Viewer        ✗ custom role lost
-After    WorkOS ── roles = [viewer, billing team] ── highest priority ─▶ Plain: Billing team
+Now      WorkOS ── roles = [viewer, billing team] ── highest priority ─▶ Plain: Billing team
 ```
 
-- Webhook sync, hub sync and the membership backfill all rank roles the same way.
-- A role whose custom role was deleted in Plain is skipped instead of failing the person's sync.
+Users with a single role sync exactly as today.
 
 Checked on dev-uk with plain:live: the same user got Viewer on main and the custom role on this branch.
 
@@ -75,11 +88,12 @@ Checked on dev-uk with plain:live: the same user got Viewer on main and the cust
 Race variant, when the flow needs a sequence diagram:
 
 ````markdown
-## Why
-
-This PR <outcome>. Today <root cause in one plain sentence>.
+## Changes
 
 ```
+Before   <one line, ending in ✗ and the error>
+Now      <one line>
+
 caller                  store                  handler
     │                       │                       │
     │── write ─────────────▶│                       │

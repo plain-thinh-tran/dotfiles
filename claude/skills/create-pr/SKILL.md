@@ -22,7 +22,7 @@ Prerequisite (team-plain repos only): a Linear id. If none exists, create it wit
 
 Before running the script, fetch the Linear issue (Linear MCP `get_issue`). It is an Error Tracking issue when the description contains a `https://app.datadoghq.eu/error-tracking/issue/<id>` link. These are created by Datadog and usually sit in the "Error Tracking Issues" milestone.
 
-For those, pass the link with `-e`. The script then adds it to the `> Fixes` line and scaffolds a summary and `## Why` with placeholders. Fill them per `~/dotfiles/PR-DESCRIPTION-STYLE.md`.
+For those, pass the link with `-e`. The script then adds it to the `> Fixes` line and scaffolds a summary, `## Why` and `## Changes` with placeholders. Fill them per `~/dotfiles/PR-DESCRIPTION-STYLE.md`.
 
 ## Plain Threads
 

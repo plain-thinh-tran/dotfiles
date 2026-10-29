@@ -194,11 +194,15 @@ if [ -n "$ERROR_URL" ]; then
   BODY=$(cat <<'BODYEOF'
 > Fixes [__LINEAR_ID__](__LINEAR_URL__), [Error Tracking Issue](__ERROR_URL__)
 
-<!-- What changed, in one sentence. -->
+<!-- What changed, in one sentence. Then one bullet per non trivial "term" with its plain meaning. -->
 
 ## Why
 
-<!-- "This PR lets/makes <outcome>." Then the problem today in one plain sentence, the diagram, and two or three bullets. See ~/dotfiles/PR-DESCRIPTION-STYLE.md. -->
+<!-- What this PR unlocks, in one or two plain sentences. See ~/dotfiles/PR-DESCRIPTION-STYLE.md. -->
+
+## Changes
+
+<!-- The Before and Now lines, then one line on what stays the same. -->
 BODYEOF
 )
 elif [ -n "$LINEAR_ID" ]; then
