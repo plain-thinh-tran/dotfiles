@@ -13,8 +13,9 @@ If you are not running on Opus 5.5, tell the user and stop.
 
 - Opus (you): frames the work, writes the brief, chairs both meetings, writes the design, specs work packets, integrates, decides every disagreement, reports to the user.
 - Council members (Codex Sol, Cursor Grok): read only advisers. They propose and attack designs and review code. They never edit. `council.sh` runs both in parallel.
-- Workers (Sonnet 5.5): the Agent tool with `model: "sonnet"`. They execute packets you fully specced; they do not make design calls.
-- Scouts (Haiku 5.5): the Agent tool with `model: "haiku"`. Read only lookups that return file:line evidence.
+- Workers: the Agent tool with `model` set to `WORKER_MODEL` (default `"sonnet"`). They execute packets you fully specced; they do not make design calls.
+- Scouts: the Agent tool with `model` set to `SCOUT_MODEL` (default `"haiku"`). Read only lookups that return file:line evidence.
+- Seats: Thinh picks the model of each seat in Raumschiff. Run `~/.claude/bin/mc seats --env` once at the start and use its `WORKER_MODEL`, `SCOUT_MODEL` and `CREW_LEAD_ALIAS` for the Agent tool `model:`; `council.sh` reads the Codex and Cursor seats itself. If the command fails, use the defaults.
 
 ## Meeting Directory
 
@@ -39,7 +40,7 @@ Each run lives in `.context/avengers/<slug>/` inside the target repo. Every meet
 5. **Vet.** Treat worker reports as leads. Reopen the cited files, rerun the key tests, and read the full diff against `design.md` before the review meeting. Done when you would sign the diff yourself.
 6. **Review meeting.**
    1. Write the change to `diff.patch` (`command git diff origin/<base>... > <dir>/diff.patch`, plus `git diff` if uncommitted). `command` bypasses rtk, which mangles piped git output.
-   2. Start `council.sh review <dir>` with `run_in_background`. In parallel, give the Opus seat to a fresh Agent with `model: "opus"` and only `diff.patch`, `design.md` and the repo, writing `review.opus.md`. You specced and vetted the code, so your own review is not independent.
+   2. Start `council.sh review <dir>` with `run_in_background`. In parallel, give the Opus seat to a fresh Agent with `model` set to `CREW_LEAD_ALIAS` (default `"opus"`) and only `diff.patch`, `design.md` and the repo, writing `review.opus.md`. You specced and vetted the code, so your own review is not independent.
    3. Merge the three reviews into `review.md`. Agreement decides whether a finding is real; severity decides what happens to it.
       - Real: two or more members raise it and the code does not prove it wrong, or one member raises it and you confirm it in the code yourself.
       - Live facts: a finding that rests on live state (Datadog monitors, log volume, AWS, GitHub) gets a read-only check before the verdict, recorded in `review.md`.
@@ -57,7 +58,7 @@ As soon as the run starts, push `<dir>/mc.json` with `runId`, `skill`, `title`, 
 
 Decisions the user owns go through Mission Control, not the chat. Keep Mission Control in step with the chat: whenever Thinh settles or changes a decision in the conversation instead of in Mission Control, immediately run `~/.claude/bin/mc resolve <runId> <id> "settled in chat: <what was decided>"` for settled ones and re-push `mc.json` for changed ones, so he never has to re-verify something he already decided. Write `<dir>/mc.json`:
 
-- `runId`: `avengers-<slug>`; `skill`: `avengers`; `title`: one line; `summary`: one sentence on what the change does and why, in plain words ("Add an SQS queue behind S3 notifications and in front of the groupers to provide a fallback mechanism"), never what the council did, so the user knows the thread at a glance when they come back to it.
+- `runId`: `avengers-<slug>`; `skill`: `avengers`; `title`: the change itself in at most 6 words, with no PR number, ticket key or commit type ("Fallback queue for the groupers"); `summary`: one sentence on what the change does and why, in plain words, that adds what the title leaves out and puts the point in its first 6 words, because the sidebar shows only those ("SQS queue behind S3 notifications so the groupers have a fallback"), never what the council did, so the user knows the thread at a glance when they come back to it.
 - `agents`: the seats that took part, with `role` `orchestrator` for you, `council` for Codex Sol and Cursor Grok. Also list each helper the first time it runs, and re-push then, so Mission Control's Agents report counts it: `{ "id": "haiku", "name": "Haiku 5.5", "role": "scout", "harness": "claude", "model": "claude-haiku-5-5" }` for scouts, `{ "id": "sonnet", "name": "Sonnet 5.5", "role": "worker", "harness": "claude", "model": "claude-sonnet-5-5" }` for workers, and `{ "id": "opus-seat", "name": "Opus 5.5", "role": "council", "harness": "claude", "model": "claude-opus-5-5" }` for the fresh Opus seat.
 - `todos`: one per decision, with `id` (`D1`, `D2`, …), `kind` `decision`, `category` (`key-decision` only when every seat picked the same option; any split is `needs-you`, Mission Control enforces this), `title`, `question`, `options` (one per side actually argued, `id` and `label`), `positions` (one per seat: `agent`, `stance`, `optionId`, `summary`, `reason`, `evidence` as a list of `path:line` strings), `recommendation` (`by` your id, `optionId`, `summary` with the ruling's reason), `tradeoffs` and `caveats` (each a JSON list of short strings, never one string).
 

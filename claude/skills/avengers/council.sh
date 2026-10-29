@@ -4,20 +4,20 @@
 #   design     needs brief.md               -> design.sol.md, design.grok.md
 #   challenge  needs brief.md, design.md    -> challenge.sol.md, challenge.grok.md
 #   review     needs design.md, diff.patch  -> review.sol.md, review.grok.md
-# Env: REPO_DIR (default: git toplevel of meeting dir), CODEX_MODEL (default gpt-6-sol), CODEX_EFFORT (default high), CURSOR_MODEL (default cursor-grok-4.6-medium)
+# Env: REPO_DIR (default: git toplevel of meeting dir), CODEX_MODEL and CURSOR_MODEL (default: the Codex and Cursor seats from `mc seats`, else gpt-6-sol and cursor-grok-4.6-medium), CODEX_EFFORT (default high)
 set -uo pipefail
 export PATH="$HOME/.local/bin:$PATH"
 
 STAGE="${1:?usage: council.sh design|challenge|review <meeting-dir>}"
 DIR="$(cd "${2:?meeting dir required}" && pwd)"
-CODEX_MODEL="${CODEX_MODEL:-gpt-6-sol}"
+CODEX_MODEL="${CODEX_MODEL:-$("$HOME/.claude/bin/mc" seats codex 2>/dev/null || echo gpt-6-sol)}"
 CODEX_EFFORT="${CODEX_EFFORT:-high}"
-CURSOR_MODEL="${CURSOR_MODEL:-cursor-grok-4.6-medium}"
+CURSOR_MODEL="${CURSOR_MODEL:-$("$HOME/.claude/bin/mc" seats cursor 2>/dev/null || echo cursor-grok-4.6-medium)}"
 REPO_DIR="${REPO_DIR:-$(git -C "$DIR" rev-parse --show-toplevel 2>/dev/null || pwd)}"
 
 need() { [ -f "$DIR/$1" ] || { echo "$DIR/$1 missing" >&2; exit 1; }; }
 
-HEADER="You sit on a council with Claude Opus 5.5 (chair), Codex Sol and Cursor Grok. The others answer the same prompt blind; the chair merges the answers.
+HEADER="You sit on a council with Claude (chair), Codex ($CODEX_MODEL) and Cursor ($CURSOR_MODEL). The others answer the same prompt blind; the chair merges the answers.
 Read only: never edit files, never run anything that writes, never push, never call GitHub.
 Repo: $REPO_DIR. Cite file:line for every claim about the code."
 
