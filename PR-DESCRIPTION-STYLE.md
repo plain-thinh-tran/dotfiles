@@ -9,7 +9,7 @@ Shape:
 3. The terms a reader needs for the rest, as bullets right under that sentence.
 4. `## Why`: what this PR unlocks, in one or two plain sentences.
 5. `## Changes`: the `Before` and `Now` lines, then one line on what stays the same.
-6. One line on how it was checked, when it was checked against a real environment (plain:live, dev-uk).
+6. `## Evidence`, only when it carries substantial numbers or proves the change works in a real environment (see Evidence below). Without one, a single line on how it was checked, when it was checked against a real environment (plain:live, dev-uk).
 7. `## Rollout`, only when something must happen before merge or after deploy: one bullet per action, tagged `Before merge:` or `After deploy:`.
 
 Say each fact once. The `Before` line already shows what breaks today, so `## Why` does not restate it, and the summary sentence already says what changed, so `## Changes` does not either.
@@ -22,9 +22,50 @@ The terms come first so every later section reads without a lookup. One bullet p
 
 Every sentence says what the system now does with what. No vague verbs ("leave alone", "handle", "support", "safely", "respect"): a reader can take "sync leaves hub roles alone" to mean sync stops touching the org. Write "sync ignores hub roles and still applies the workspace role" instead. When a sentence names a component, say which part of its behaviour changed and which part stays.
 
-Plain words describe what happens, not which function does it. Name code only where the reviewer needs it to find their way. Investigation detail (log trails, event counts, queries, prod lookups) lives in the Linear issue. Add evidence, rollout, backfill, follow ups or test notes only when the reviewer needs them to trust or ship the change.
+Plain words describe what happens, not which function does it. Name code only where the reviewer needs it to find their way. Investigation detail (log trails, raw queries, prod lookups) lives in the Linear issue; only the numbers or results that justify the PR go in `## Evidence`. Add evidence, rollout, backfill, follow ups or test notes only when the reviewer needs them to trust or ship the change.
 
 When the change is a new rule or data shape rather than a broken flow, keep `## Changes` to the two or three points a reviewer must hold in their head (the defaults, the limits). Leave what the diff already shows (which layers carry a field, event defaults, permission checks, error codes) to the diff. Then show the rule applied to one real case from production, with the actual values in place, and end with one sentence on what that means for a user.
+
+## Evidence
+
+Add `## Evidence` only when it holds something a reviewer needs to trust the PR: numbers that size the problem or the gain (error counts, failed runs, timings before and after), or the result of running the change in a real environment (dev-uk, plain:live, a browser walk through). "Tests pass" or a restated diff is not evidence; leave the section out.
+
+Shape:
+
+- One or two sentences on the setup first: where it ran, what data it ran on, how each run started.
+- Then the data, in the smallest form that holds it: a table of three or four short columns, a timing bar chart, or two or three bullets. Bold the key value in each row. No URLs, paths or query strings inside table cells; link a run id or PR number instead.
+- Caveats and untested cases go in a `> [!NOTE]` callout, a hint about prod in `> [!TIP]`, never in a closing paragraph.
+- Replace customer and workspace names and ids with placeholders (`Workspace A`), and never include test credentials or personal emails.
+
+Example from a browser walk through:
+
+```markdown
+## Evidence
+
+Same branch run locally against dev-uk, signed in as a test user whose hub links two workspaces, `Workspace A` and `Workspace B` (in picker order). Each run starts signed out and picks the hub in AuthKit; Plain's picker never showed.
+
+| Case | Before picking the hub | Lands on |
+| --- | --- | --- |
+| First login | Nothing stored | **Workspace A** (first in picker) |
+| Returning | Used `Workspace B`, logged out | **Workspace B** (last used) |
+
+> [!NOTE]
+> No hub workspace and pending invites are covered by unit tests only.
+```
+
+Example sizing a problem:
+
+```markdown
+## Evidence
+
+54 failed `PR Stage - Removal` runs between 2026-10-21 and 2026-10-22:
+
+| Cause | Runs |
+| --- | --- |
+| `Workspace "prNNNNN" doesn't exist` (this PR) | **31** |
+| `DescribeNetworkInterfaces` 403 (infrastructure#716) | 17 |
+| Other | 6 |
+```
 
 ## Picking the Diagram
 
@@ -39,6 +80,13 @@ The `Before` and `Now` lines are the default diagram. Add a bigger one under the
 | The same structure for several customers | Side by side columns, shared rows aligned across them |
 
 Draw with box characters (`│ ─ ┼ ▶ ◀`), keep columns aligned (generate it with a short script once arrows cross columns), and annotate the failing arrow at the end of its line with `✗` and the error. Show nesting with `├─` and `└─` indented under the parent.
+
+Keep every diagram line under 80 characters so GitHub shows it without a horizontal scrollbar. Name each step in words ("Plain's picker", "last used hub workspace"), not by URL or query string, and leave out hops the reviewer does not need. When a line is still too long, shorten the words before splitting the flow across lines:
+
+```
+Before  pick hub ─▶ Plain's picker ─▶ pick again   ✗
+After   pick hub ─▶ last used hub workspace
+```
 
 Prefer an ASCII block over a markdown table whenever a cell would need a list or `<br>`. A note that is only a reminder for Thinh is a sentence, not a table.
 

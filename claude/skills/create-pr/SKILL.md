@@ -34,6 +34,16 @@ Find the thread in the Linear issue's attachments (`get_issue` with `fields: ["a
 
 Write and edit every PR description by `~/dotfiles/PR-DESCRIPTION-STYLE.md`: lean shape, diagram choice, an example, and how to edit without overwriting.
 
+## Evidence
+
+Before running the script, try to produce evidence that the change is needed and that it works, so the description can carry a `## Evidence` section:
+
+- Size the problem: Datadog error and event counts, failed CI runs, affected workspaces or PRs.
+- Prove it works: run the change against a real environment (dev-uk with plain:live, the support app in a browser via chrome-devtools) and record what happened per case; for performance, time before and after on the same build.
+- Read-only queries are fine. Anything that creates or changes data in a shared environment needs Thinh's go-ahead first.
+
+The section is optional: add it only when the result has substantial numbers or shows the change working, formatted per Evidence in `~/dotfiles/PR-DESCRIPTION-STYLE.md`. When nothing worth showing came out, leave it out and say in one line how the change was checked. If evidence needs something you cannot get (a login, an account in the right state), say so and ask rather than skipping silently.
+
 ## Before running
 
 - One logical change per PR. If you can't summarize it in one title, split it.
