@@ -1,6 +1,6 @@
 ---
 name: weekly-review
-description: Write Thinh's weekly PR review newsletter for the 7 days ending today (or a given YYYY-MM-DD), push it to the self-learning repo and open it in the browser. Use when Thinh says "weekly review", "/weekly-review", "review my week" or asks for this week's newsletter.
+description: Write Thinh's weekly PR review newsletter for the current Sunday to Saturday week (or the week ending a given YYYY-MM-DD), push it to the self-learning repo and open it in the browser. Use when Thinh says "weekly review", "/weekly-review", "review my week" or asks for this week's newsletter.
 argument-hint: "[YYYY-MM-DD] [redo]"
 allowed-tools: Bash, Read, Write, Grep, Glob
 ---
@@ -15,7 +15,7 @@ REPO=/Users/thinhtran/workspace/self-learning
 
 ## Inputs
 
-- End date: the `YYYY-MM-DD` argument if given, else today in UTC (`date -u +%F`). The window is the 7 days ending on it
+- End date: the `YYYY-MM-DD` argument if given, else the Saturday of the current Sunday to Saturday week in UTC (`date -u -v+$((6 - $(date -u +%w)))d +%F`). The window is the 7 days ending on it, so a run before Saturday covers a partial week and needs `redo` to refresh later
 - `redo`: only if given, an existing review for that week may be replaced
 
 ## Steps
