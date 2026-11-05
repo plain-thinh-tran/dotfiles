@@ -12,6 +12,8 @@ Shape:
 6. `## Evidence`, only when it carries substantial numbers or proves the change works in a real environment (see Evidence below). Without one, a single line on how it was checked, when it was checked against a real environment (plain:live, dev-uk).
 7. `## Rollout`, only when something must happen before merge or after deploy: one bullet per action, tagged `Before merge:` or `After deploy:`.
 
+A small fix (a few lines of CI, config or a one line bug) drops the terms bullets and `## Changes`: the summary sentence, `## Why` and `## Evidence` carry it, and the reviewer reads the diff faster than a Before and Now diagram.
+
 Say each fact once. The `Before` line already shows what breaks today, so `## Why` does not restate it, and the summary sentence already says what changed, so `## Changes` does not either.
 
 The terms come first so every later section reads without a lookup. One bullet per non trivial term (domain language, internal names like "debt", "cold sync", "hub role"), in quotes, with its plain meaning and a concrete example value. Keep it to the one to three terms the summary and the `Before` and `Now` lines actually use. Skip terms any Plain engineer knows, and terms the diagram already makes obvious (a process name like "membership sync" needs no definition when the diagram shows what it does).
