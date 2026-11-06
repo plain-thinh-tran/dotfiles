@@ -1,0 +1,12 @@
+{"tag": "cursor-grok-4.6-medium-r1", "L": ["L1", "L2", "L5", "L6"], "S": ["S1(improved)", "S2", "S3"], "false": 0, "note": "no L3 authorizer reversal, no L4 spoofable"}
+{"tag": "codex-gpt-6.1-sol-r1", "L": ["L5"], "S": ["S2", "S3"], "false": 0, "note": "one lacked item; missed both reverts; correctly says his agent flagged 7121 (his own words)"}
+{"tag": "muse-wonder-1.0-medium-r1", "L": ["L5", "L6"], "S": ["S3"], "false": 0, "note": "framed 12744 revert as a shoutout; correctly says his agent flagged 7121; missed 7061"}
+{"tag": "muse-wonder-1.0-medium-r2", "L": ["L3", "L5", "L6"], "S": ["S3"], "false": 0, "note": "found the authorizer reversal; framed 12744 revert as a shoutout; missed 7061"}
+{"tag": "codex-gpt-6.1-sol-r2", "L": ["L5"], "S": ["S2", "S3"], "false": 0, "note": "one lacked item again; missed both reverts; correctly credits agent on 7121"}
+{"tag":"composer-2.5-r1","L":["L6"],"S":["S3"],"false":2,"note":"says author wrote nice. fixed (it was Thinh); raises sdk#115 split against his codegen note; counts merge rank as improvement; missed both reverts"}
+{"tag":"cursor-grok-4.6-medium-r2","L":["L1","L2","L5","L6"],"S":["S1","S3"],"false":0,"note":"caught 12744 body vs code mismatch; mentions expedite (out of scope by PROMPT.md)"}
+{"tag":"grok-4.7-medium-r1","L":["L2","L3","L4","L5","L6"],"S":["S3"],"false":1,"note":"only run with authorizer reversal AND spoofable finding; framed 7061 revert as shoutout; claims merged diff adds resolveOnlyHubWorkspaceForUser (it does not)"}
+{"tag":"grok-4.7-medium-r2","L":["L1","L2","L5","L6"],"S":["S3"],"false":0,"note":"both reverts as one pattern, matches gold P1 shape; flags its own unread diff honestly"}
+{"tag":"gemini-4-argon-medium-r1","L":["L1","L2","L3","L5","L6"],"S":["S1","S3","+12456 canary (his words, missed by gold)"],"false":0,"note":"both reverts as one P1 like gold; allowlist rework incl. rename that broke the datadog notice"}
+{"tag":"gemini-4-argon-medium-r2","L":["L1","L2","L3","L4","L5","L6"],"S":["S1","+12456 canary","+12649 tracing opt out exclusion"],"false":0,"note":"only run to hit all six gold items"}
+{"tag":"composer-2.5-r2","L":["L6"],"S":["S3"],"false":1,"note":"raises sdk#115 split against his codegen note again; praises commenting on his own PR"}

@@ -1,0 +1,4 @@
+{"seat":"puller","model":"haiku","rep":1,"correct":10,"missed":0,"wrong":0,"tokens":142439,"tools":7,"ms":75382,"note":"also caught baseRefName main vs stacked claim"}
+{"seat":"puller","model":"haiku","rep":2,"correct":10,"missed":0,"wrong":0,"tokens":139556,"tools":9,"ms":74342,"note":"extra: Linear done-when says exactly one hub workspace, diff has no count check; thread 1 resolvedBy cursor"}
+{"seat":"puller","model":"sonnet","rep":1,"correct":10,"missed":0,"wrong":0,"tokens":127771,"tools":4,"ms":142209,"note":"extra: Linear out of scope, Greptile reviewed only commit 1"}
+{"seat":"puller","model":"sonnet","rep":2,"correct":10,"missed":0,"wrong":0,"tokens":128271,"tools":5,"ms":140280,"note":"extra: Linear done-when, Cursor summary flagged wrong pick risk before merge"}

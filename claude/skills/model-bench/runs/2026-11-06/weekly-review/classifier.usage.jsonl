@@ -1,0 +1,7 @@
+{"model":"opus","rep":1,"tokens":144977,"tools":17,"ms":190350}
+{"model":"sonnet","rep":0,"tokens":154248,"tools":17,"ms":202442,"note":"original production run"}
+{"model":"haiku","rep":1,"tokens":210333,"tools":21,"ms":291542}
+{"model":"sonnet","rep":2,"tokens":154151,"tools":13,"ms":284237}
+{"model":"haiku","rep":2,"tokens":199081,"tools":22,"ms":300699}
+{"model":"sonnet","rep":1,"tokens":149848,"tools":14,"ms":345525}
+{"model":"opus","rep":2,"tokens":158561,"tools":14,"ms":405363}

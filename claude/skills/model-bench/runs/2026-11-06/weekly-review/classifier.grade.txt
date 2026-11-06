@@ -1,0 +1,6 @@
+haiku-r1.json agree 28/29 tp 4 fp ['conversation-6653518926'] fn [] missing 0 themes [('API Key IP Allowlists', 14), ('Datadog Alerts And Notices', 10), ('WorkOS Hub And Directory Sync', 7)]
+haiku-r2.json agree 26/29 tp 2 fp ['conversation-6653518926'] fn ['inline-4470594475', 'inline-4471299163'] missing 0 themes [('API Key IP Allowlists', 14), ('Datadog Alerting And Observability', 10), ('WorkOS Hub Organizations And SSO Provisioning', 8)]
+opus-r1.json agree 28/29 tp 4 fp ['inline-4459204156'] fn [] missing 0 themes [('API Key IP Allowlists', 14), ('WorkOS Hub And SSO Sign In', 12), ('Datadog Alert Routing And Noise', 10)]
+opus-r2.json agree 29/29 tp 4 fp [] fn [] missing 0 themes [('API Key IP Allowlists', 14), ('WorkOS Hub And SSO Login', 12), ('Datadog Alerting And Notices', 9)]
+sonnet-r1.json agree 28/29 tp 4 fp ['inline-4459204156'] fn [] missing 0 themes [('API Key IP Allowlists End To End', 14), ('WorkOS Hub And AuthKit Login Fixes', 12), ('Datadog Alert Routing And Notices', 10)]
+sonnet-r2.json agree 28/29 tp 4 fp ['inline-4459204156'] fn [] missing 0 themes [('API Key IP Allowlist Rollout', 14), ('WorkOS Hub And SSO Fixes', 12), ('Dependabot Review Requests Through A Shared Action', 5)]

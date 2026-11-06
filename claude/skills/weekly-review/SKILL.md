@@ -42,13 +42,13 @@ Opus 5.5 (you) is the advisor: decide what needs verifying, judge every worker o
 
 | Worker | How | Job |
 |---|---|---|
-| Grok 4.6 | `$REPO/weekly-reviews/grok.sh <end>` (Bash, background) | Blind first draft of `verdict`, `shoutouts`, `improved`, `lacked` into `.work/<end>/draft.grok.json`. Read only, no GitHub, so every claim it makes is a lead |
+| Gemini 4 Argon | `$REPO/weekly-reviews/grok.sh <end>` (Bash, background; the script keeps its old name, `CURSOR_MODEL` overrides the model) | Blind first draft of `verdict`, `shoutouts`, `improved`, `lacked` into `.work/<end>/draft.grok.json`. Read only, no GitHub, so every claim it makes is a lead |
 | Sonnet | Agent, `model: "sonnet"` | Classify every `reviewing.comments` entry as `impactful` or `discussion` by the evidence rule in `guidelines/reviewing.md` (it runs the `gh api` thread and commit checks), and draft `workedOn` from `authored`. Returns JSON fragments with the evidence per entry |
 | Haiku | Agent, `model: "haiku"`, one per claim | Evidence pulls you name exactly: `gh pr diff`, review threads, commits after a comment, Linear state, a Datadog query. Returns raw facts and links, no judgement |
 
 Then, as advisor:
 
-- Send a Haiku pull for every causal claim in Grok's `lacked` and for every Shoutout you keep. A claim becomes `verified` only on evidence you read in a worker's return; drop or rewrite what does not hold
+- Send a Haiku pull for every causal claim in the drafter's `lacked` and for every Shoutout you keep. A claim becomes `verified` only on evidence you read in a worker's return; drop or rewrite what does not hold
 - Spot check at least two of Sonnet's `impactful` calls against their threads before accepting the classification
 - Follow Through, Next Week's Checklist and Corrections are yours alone. Do not delegate grading
 - If `grok.sh` fails or `cursor-agent` is missing, draft those four sections yourself and say so in the report

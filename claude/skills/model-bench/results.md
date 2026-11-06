@@ -33,6 +33,60 @@ Top three, n=3 per cell, same day:
 
 Decision: Codex seat moved from `gpt-6-sol` to `gpt-6.1-sol@high` (`mc seats`, which `peers.sh` reads). It led or tied on must catch in every round with no more noise than the default; the cost is about 50% more time per review. Astra's sweep lead did not hold over three rounds.
 
+## 2026-11-06
+
+CLIs: cursor-agent 2026.11.05-86047df, codex-cli 0.167.0, Claude Code CLI. Seats: the weekly review workers under the Opus advisor (`weekly-review` skill). Fixture: issue 9 (2026-11-01 to 2026-11-07) of the private weekly review, graded against its pushed JSON (self-learning `59705f9`) and the facts verified that session. Drafters ran on an isolated copy of the inputs (`ws/`) so none could read the published issue. Scripts and scores (no raw drafts, they quote internal PR text) in `runs/2026-11-06/weekly-review/`.
+
+### Blind Drafter Seat
+
+Same prompt as `weekly-reviews/grok.sh`. Recall is of 6 verified What Lacked items: L1 support-app#7061 merged before the prod picker flip and reverted, L2 services#12744 rule swapped 3 minutes before merge and reverted, L3 services#12597 → #12642 authorizer reversal, L4 the unanswered spoofable IP finding, L5 praise only approvals on the largest reviewed PRs, L6 the review volume drop. A revert framed as a Shoutout counts as missed.
+
+| Harness | Model | n | Lacked recall (per run) | False claims | Time |
+|---|---|---|---|---|---|
+| Cursor | gemini-4-argon-medium | 2 | 5, 6 | 0 | 455s / 481s |
+| Cursor | grok-4.7-medium | 2 | 5, 4 | 1 | 709s / 643s |
+| Cursor | cursor-grok-4.6-medium (default) | 2 | 4, 4 | 0 | 337s / 309s |
+| Cursor | muse-wonder-1.0-medium | 2 | 2, 3 | 0 | 156s / 173s |
+| Codex | gpt-6.1-sol | 2 | 1, 1 | 0 | 240s / 283s |
+| Cursor | composer-2.5 | 2 | 1, 1 | 3 | 164s / 157s |
+
+### Classifier And workedOn Seat
+
+Same prompt as the session's Sonnet worker. Gold: the 29 classified W0 comments, 4 impactful. Every `workedOn` passed `schema.mjs`.
+
+| Model | n | Agree /29 (per run) | Impactful misses | Tokens | Time |
+|---|---|---|---|---|---|
+| opus | 2 | 28, 29 | aws#310 nit called impactful once | 145k / 159k | 190s / 405s |
+| sonnet (default) | 2 | 28, 28 | aws#310 nit called impactful both runs | 150k / 154k | 346s / 284s |
+| haiku | 2 | 28, 26 | his own close on services#12501 called impactful both runs; run 2 dropped 2 real ones | 210k / 199k | 292s / 301s |
+
+### Evidence Puller Seat
+
+The services#12744 pull, graded on a 10 fact key (commits and times, resolve not deny, the `ORDER BY status_changed_at` pick, body vs diff, unanswered Cursor findings, revert reason, the #12748 change request and reply).
+
+| Model | n | Facts correct (per run) | Wrong | Tokens | Time |
+|---|---|---|---|---|---|
+| haiku (default) | 2 | 10, 10 | 0 | 142k / 140k | 75s / 74s |
+| sonnet | 2 | 10, 10 | 0 | 128k / 128k | 142s / 140s |
+
+### Findings
+
+1. Gemini 4 Argon is the best drafter here, the opposite of the 2026-10-24 critical check, where it was the weakest. It was the only model to tie both reverts into one pattern on both runs, and the only one to find the unanswered spoofable IP finding and all six items in one run. It also found two real shoutouts the advisor missed: the services#12456 prod canary test, written in Thinh's own words, and the tracing opt out exclusion in services#12649.
+2. Cheap and fast drafters (Muse Wonder, gpt-6.1-sol, Composer) missed both reverts, the week's most important pattern, and Muse Wonder praised the #12744 revert as a Shoutout. Composer twice raised splitting sdk#115 against his recorded codegen note.
+3. Codex and Muse Wonder correctly said "your agent flagged" the types.ts issue on support-app#7121, which is Thinh's own wording; the advisor's published shoutout credited the catch to him.
+4. The classifier differences come down to one guideline gap, not model quality: acting on a nit (aws#310, "decomment") is impactful by the letter of `guidelines/reviewing.md` and discussion by its intent. Opus is not worth its price for one ambiguous call. Haiku is inconsistent and uses more tokens than Sonnet.
+5. Haiku and Sonnet pull evidence equally well; Haiku is twice as fast.
+
+### Defaults Changed
+
+- Blind drafter: `gemini-4-argon-medium` (`weekly-reviews/grok.sh` default `CURSOR_MODEL`, and the drafter row in `weekly-review/SKILL.md`). Was `cursor-grok-4.6-medium`. Higher recall on both runs, no more false claims; about 150s slower, which is hidden behind the Sonnet worker running in parallel.
+- Classifier and puller unchanged (Sonnet, Haiku).
+
+### Open
+
+- One week of one engineer is the whole fixture. Rerun on next week's issue before trusting Gemini's lead, and drop it back to Grok if it regresses.
+- `guidelines/reviewing.md` should say whether an acted on nit is impactful; only Thinh edits guidelines.
+
 ## 2026-10-26
 
 CLIs: Claude Code 2.1.310, cursor-agent 2026.10.22-27dcf5f, codex-cli 0.164.0. Seat: Raumschiff project chat (`src/projectChat.ts`): read only, short reply plus a json block of project actions (setNotes, addDecision, deleteDecision, addPrs, upsertTerm, deleteTerm). Bench: `bench/chatSeats.ts` in Raumschiff, 15 scripted cases on a fixture project (Q&A in Master and Area context, notes append/remove/rewrite keeping every line, decisions with area refs, delete by description, ambiguous delete that must ask, multi action, "don't change anything", two turn memory through the harness's resume). Graded automatically through the real `parseChatOutput` and `applyChatActions`; n=2 per cell. Two grader artifacts counted as passes ("under 1 second" for "1s", a clarifying question without "?").
