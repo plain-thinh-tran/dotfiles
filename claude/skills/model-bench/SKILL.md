@@ -1,6 +1,6 @@
 ---
 name: model-bench
-description: Benchmark AI models for the seats that /avengers and /prod-ready-check fill (reviewer, scout, build worker), refresh the Codex and Cursor CLIs, spot new models, and update those skills' model defaults from the evidence. Use when a new model ships, when asked which model to use for a seat, whether a cheaper or faster model would do, or to rerun the model benchmark.
+description: Benchmark AI models for the seats that /prod-ready-check fills (reviewer, scout) and the build worker, refresh the Codex and Cursor CLIs, spot new models, and update those skills' model defaults from the evidence. Use when a new model ships, when asked which model to use for a seat, whether a cheaper or faster model would do, or to rerun the model benchmark.
 ---
 
 # Model Bench
@@ -11,13 +11,15 @@ A fixed benchmark over real Plain code, so a model choice rests on what a model 
 
 | Seat | Used by | Default lives in |
 |---|---|---|
-| Codex reviewer | prod-ready-check, avengers council | `prod-ready-check/peers.sh`, `avengers/council.sh` (`CODEX_MODEL`) |
-| Cursor reviewer | prod-ready-check, avengers council | `prod-ready-check/peers.sh` (`GROK_MODEL`), `avengers/council.sh` (`CURSOR_MODEL`) |
-| Claude reviewer | prod-ready-check (main session), avengers fresh Opus seat | `avengers/SKILL.md` |
-| Scout | avengers step 1 | `avengers/SKILL.md` |
-| Build worker | avengers step 4 | `avengers/SKILL.md` |
+| Codex reviewer | prod-ready-check | `prod-ready-check/peers.sh` (`CODEX_MODEL`) |
+| Cursor reviewer | prod-ready-check | `prod-ready-check/peers.sh` (`GROK_MODEL`) |
+| Claude reviewer | prod-ready-check (main session) | Raumschiff Crew Lead seat |
+| Scout | prod-ready-check scouting step | `prod-ready-check/SKILL.md` (`SCOUT_MODEL`) |
+| Build worker | Raumschiff Worker seat | `mc seats worker` |
 | Critical check | Mission Control, Cursor Error Tracking PRs | `src/cursorCheck.ts` in the Raumschiff repo (`~/personal/repos/Raumschiff`) (`DEFAULT_SEAT`); bench with `bench/checkSeats.ts` |
 | Project chat | Raumschiff project chat (Master and Area views) | `src/projectChat.ts` in the Raumschiff repo (`chatModel()`, `MC_CHAT_MODEL`); bench with `bench/chatSeats.ts <out> <harness:model,...> [reps] [cases]` |
+| Weekly review drafter | weekly-review blind draft | `weekly-reviews/grok.sh` in the self-learning repo (`CURSOR_MODEL` default); bench with `runs/2026-11-06/weekly-review/drafter.sh` |
+| Weekly review classifier, puller | weekly-review Sonnet and Haiku workers | `weekly-review/SKILL.md` Delegation table |
 
 Keep three different model families in the reviewer seats. The benchmark exists because one family alone misses bugs another catches (see `results.md`).
 
