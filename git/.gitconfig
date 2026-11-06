@@ -4,6 +4,8 @@
 
 [safe]
 	directory = /Users/thinhtran/workspace/services
+	directory = /Users/thinhtran/actions-runner/_work/Raumschiff/Raumschiff
+	directory = /Users/thinhtran/actions-runner/_work/Raumschiff/Raumschiff
 
 [push]
 	autoSetupRemote = true
