@@ -1,0 +1,3 @@
+Codex GPT-6 Sol: 8 cases, must catch 3/10 kept 12/27 noise 5/12 then 6/12
+Codex (candidate) GPT-6 Astra: 8 cases, must catch 4/10 kept 12/27 noise 5/12 then 7/12
+Codex (candidate) GPT-6.1 Sol high: 8 cases, must catch 5/10 kept 13/27 noise 5/12 then 7/12

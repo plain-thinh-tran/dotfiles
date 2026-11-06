@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Shared runner for the peer reviewers, sourced by review.sh and debate.sh.
-# Env: CODEX_MODEL and GROK_MODEL (default: the Codex and Cursor seats from `mc seats`, else gpt-6-sol and cursor-grok-4.6-medium), CODEX_EFFORT (default high)
+# Env: CODEX_MODEL and GROK_MODEL (default: the Codex and Cursor seats from `mc seats`, else gpt-6.1-sol and cursor-grok-4.6-medium), CODEX_EFFORT (default high)
 
 peer_name() {
   case "$1" in
@@ -12,7 +12,7 @@ peer_name() {
 
 peer_model() {
   case "$1" in
-  codex) echo "${CODEX_MODEL:-$("$HOME/.claude/bin/mc" seats codex 2>/dev/null || echo gpt-6-sol)}" ;;
+  codex) echo "${CODEX_MODEL:-$("$HOME/.claude/bin/mc" seats codex 2>/dev/null || echo gpt-6.1-sol)}" ;;
   grok) echo "${GROK_MODEL:-$("$HOME/.claude/bin/mc" seats cursor 2>/dev/null || echo cursor-grok-4.6-medium)}" ;;
   esac
 }

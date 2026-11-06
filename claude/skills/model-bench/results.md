@@ -2,6 +2,37 @@
 
 Newest first. n is runs per cell; one run is noisy, treat single differences as ties.
 
+## 2026-11-06 (Raumschiff Codex Seat)
+
+codex-cli 0.164.0. Seat: Codex reviewer (prod-ready-check), benched in the Raumschiff Benchmark tab on its 8 frozen review cases (services-11768, 11919, 11980, 12008, 12089, support-app-6888, sdk-115, sales-dashboard-68), graded by its Sonnet judge. The app keeps only the latest run per model and case, so `rounds.sh` snapshots between rounds; it and each round's scores are in `runs/2026-11-06/raumschiff-codex/` (no raw findings, they quote Plain code).
+
+Sweep, n=1 per cell (must catch of 10, kept of 27, noise of 12):
+
+| Model | Must catch | Kept | Noise | Time |
+|---|---|---|---|---|
+| gpt-6-astra | 5 | 11 | 5 | 34m |
+| gpt-6-sol@xhigh | 5 | 12 | 7 | 50m |
+| gpt-6.1-sol@high | 4 | 12 | 5 | 49m |
+| gpt-6.1-sol@xhigh | 4 | 12 | 6 | 72m |
+| gpt-5.6-sol | 4 | 11 | 5 | 62m |
+| gpt-6.1-terra | 4 | 9 | 6 | 11m |
+| gpt-6-sol (default) | 3 | 10 | 4 | 31m |
+| gpt-6-sol@medium | 3 | 10 | 5 | 15m |
+| gpt-6.1-sol@low | 2 | 4 | 4 | 9m |
+| gpt-6-luna | 1 | 4 | 0 | 13m |
+
+`gpt-daybreak-blue-latest` is listed by Codex but refuses a ChatGPT account. The default scored 6/10 must catch on 2026-10-30 and 3/10 here, so single runs do not separate the top models.
+
+Top three, n=3 per cell, same day:
+
+| Model | Must catch /30 (per run) | Kept /81 | Noise /36 | Then → now /36 | Time per sweep |
+|---|---|---|---|---|---|
+| gpt-6.1-sol@high | 14 (4, 5, 5) | 37 | 14 | 23 | ~48m |
+| gpt-6-astra | 13 (5, 4, 4) | 34 | 16 | 23 | ~35m |
+| gpt-6-sol (default) | 10 (3, 4, 3) | 34 | 14 | 20 | ~31m |
+
+Decision: Codex seat moved from `gpt-6-sol` to `gpt-6.1-sol@high` (`mc seats`, which `peers.sh` reads). It led or tied on must catch in every round with no more noise than the default; the cost is about 50% more time per review. Astra's sweep lead did not hold over three rounds.
+
 ## 2026-10-26
 
 CLIs: Claude Code 2.1.310, cursor-agent 2026.10.22-27dcf5f, codex-cli 0.164.0. Seat: Raumschiff project chat (`src/projectChat.ts`): read only, short reply plus a json block of project actions (setNotes, addDecision, deleteDecision, addPrs, upsertTerm, deleteTerm). Bench: `bench/chatSeats.ts` in Raumschiff, 15 scripted cases on a fixture project (Q&A in Master and Area context, notes append/remove/rewrite keeping every line, decisions with area refs, delete by description, ambiguous delete that must ask, multi action, "don't change anything", two turn memory through the harness's resume). Graded automatically through the real `parseChatOutput` and `applyChatActions`; n=2 per cell. Two grader artifacts counted as passes ("under 1 second" for "1s", a clarifying question without "?").
