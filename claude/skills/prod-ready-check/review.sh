@@ -34,6 +34,7 @@ $( [ -f "$CTX/scout.md" ] && echo "- Map of callers, consumers, tests and siblin
 Trace every changed file to what it replaces and what consumes it (callers, other stacks, readers of outputs, schemas, env vars), and compare old and new behaviour attribute by attribute. Back external facts with library or provider source in the repo's node_modules or vendor docs you already know, and say which.
 
 $(cat "$SKILL_DIR/lenses.md")
+$( [ -f "$SKILL_DIR/taste.md" ] && printf '\n%s\n' "$(cat "$SKILL_DIR/taste.md")" )
 
 Return every finding in the schema. Use worth-knowing for non-blocking items. List parity checks that passed in checked_fine.
 EOF

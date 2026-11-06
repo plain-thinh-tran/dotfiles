@@ -54,6 +54,7 @@ Material:
 - All findings, numbered: $DEBATE/items.json (C* Claude's, X* Codex's, G* Grok's; the owner field says whose)
 - Diff: $CTX/diff.patch. PR head is git ref pr-$PR, base is origin/$BASE. Read code only with git show pr-$PR:<path> or git show origin/$BASE:<path>, never from the working tree (a different branch), and cite locations as plain path:line with no ref prefix.
 - Review lenses: $LENSES
+$( [ -z "${LENSES_FILE:-}" ] && [ -f "$SKILL_DIR/taste.md" ] && echo "- Taste rules, findings Thinh has said he does not want: $SKILL_DIR/taste.md. An item a rule covers is out of scope: disagree, or withdraw your own." )
 - Diffs of related PRs in other repos, if any: $CTX/external/
 $PRIOR
 $SCOPE
