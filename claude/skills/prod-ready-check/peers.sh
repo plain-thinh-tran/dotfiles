@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Shared runner for the peer reviewers, sourced by review.sh and debate.sh.
-# Env: CODEX_MODEL and GROK_MODEL (default: the Codex and Cursor seats from `mc seats`, else gpt-6.1-sol and cursor-grok-4.6-medium), CODEX_EFFORT (default high)
+# Env: CODEX_MODEL and GROK_MODEL (default: the Codex and Cursor seats from `mc seats`, else gpt-6.1-sol and cursor-grok-4.6-medium), CODEX_EFFORT (default: the Codex seat's effort from `mc seats codex --effort`, else high)
 
 peer_name() {
   case "$1" in
@@ -8,6 +8,12 @@ peer_name() {
   grok) echo Grok ;;
   *) echo "unknown peer: $1 (codex|grok)" >&2; return 1 ;;
   esac
+}
+
+codex_effort() {
+  local effort
+  effort="$("$HOME/.claude/bin/mc" seats codex --effort 2>/dev/null)"
+  case "$effort" in low | medium | high | xhigh) echo "$effort" ;; *) echo high ;; esac
 }
 
 peer_model() {
@@ -25,7 +31,7 @@ run_peer() {
     command -v codex >/dev/null || { echo "codex not installed" >&2; return 1; }
     perl -e 'alarm shift; exec @ARGV' "${PEER_TIMEOUT:-900}" codex exec \
       -m "$(peer_model codex)" \
-      -c "model_reasoning_effort=\"${CODEX_EFFORT:-high}\"" \
+      -c "model_reasoning_effort=\"${CODEX_EFFORT:-$(codex_effort)}\"" \
       -s read-only \
       -C "$repo" \
       --ephemeral \
