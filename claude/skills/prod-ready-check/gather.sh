@@ -59,6 +59,10 @@ gh pr view "$PR" -R "$REPO" --json \
   number,title,body,url,author,state,isDraft,baseRefName,headRefName,headRefOid,mergeable,mergeStateStatus,reviewDecision,additions,deletions,changedFiles,labels,createdAt,files \
   >"$OUT_DIR/meta.json"
 gh pr diff "$PR" -R "$REPO" >"$OUT_DIR/diff.patch"
+FILTER="$HOME/personal/repos/Raumschiff/bin/filter-diff.ts"
+TIER_LINE="tier: full (filter-diff.ts not found, sized as full)"
+if [ -f "$FILTER" ]; then TIER_LINE="$(bun "$FILTER" "$OUT_DIR" || echo "$TIER_LINE")"; fi
+echo "$TIER_LINE" >"$OUT_DIR/tier.txt"
 jq -r '.files[].path' "$OUT_DIR/meta.json" >"$OUT_DIR/files.txt"
 if [ "$(wc -l <"$OUT_DIR/files.txt")" -ge 100 ]; then
   gh pr diff "$PR" -R "$REPO" --name-only >"$OUT_DIR/files.txt"
@@ -179,4 +183,5 @@ fi
 
 cat "$SUMMARY"
 echo
-echo "context dir: $OUT_DIR (diff.patch, meta.json, reviews.json, author-prs.json, author-overlap.json, ticket-prs.json)"
+echo "$TIER_LINE"
+echo "context dir: $OUT_DIR (diff.patch, filtered.md when noise files were left out, tier.txt, meta.json, reviews.json, author-prs.json, author-overlap.json, ticket-prs.json)"
