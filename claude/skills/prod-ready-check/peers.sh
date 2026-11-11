@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # Shared runner for the peer reviewers, sourced by review.sh and debate.sh.
-# Env: CODEX_MODEL and GROK_MODEL (default: the Codex and Cursor seats from `mc seats`, else gpt-6.1-sol and cursor-grok-4.6-medium), CODEX_EFFORT (default: the Codex seat's effort from `mc seats codex --effort`, else high)
+# Env: PEER_TIMEOUT (default 900s), CODEX_MODEL and CURSOR_MODEL (default: the Codex and Cursor seats from `mc seats`, else gpt-6.1-sol and gpt-5.6-sol-high-fast), CODEX_EFFORT (default: the Codex seat's effort from `mc seats codex --effort`, else high)
 
 peer_name() {
   case "$1" in
   codex) echo Codex ;;
-  grok) echo Grok ;;
-  *) echo "unknown peer: $1 (codex|grok)" >&2; return 1 ;;
+  cursor) echo Cursor ;;
+  *) echo "unknown peer: $1 (codex|cursor)" >&2; return 1 ;;
   esac
 }
 
@@ -19,7 +19,7 @@ codex_effort() {
 peer_model() {
   case "$1" in
   codex) echo "${CODEX_MODEL:-$("$HOME/.claude/bin/mc" seats codex 2>/dev/null || echo gpt-6.1-sol)}" ;;
-  grok) echo "${GROK_MODEL:-$("$HOME/.claude/bin/mc" seats cursor 2>/dev/null || echo cursor-grok-4.6-medium)}" ;;
+  cursor) echo "${CURSOR_MODEL:-$("$HOME/.claude/bin/mc" seats cursor 2>/dev/null || echo gpt-5.6-sol-high-fast)}" ;;
   esac
 }
 
@@ -39,7 +39,7 @@ run_peer() {
       -o "$out" \
       "$prompt" </dev/null >"$log" 2>&1 || { echo "codex failed or timed out after ${PEER_TIMEOUT:-900}s, see $log" >&2; return 1; }
     ;;
-  grok)
+  cursor)
     local agent
     agent="$(command -v cursor-agent || echo "$HOME/.local/bin/cursor-agent")"
     [ -x "$agent" ] || { echo "cursor-agent not installed: curl https://cursor.com/install -fsS | bash" >&2; return 1; }
@@ -47,14 +47,14 @@ run_peer() {
     perl -e 'alarm shift; exec @ARGV' "${PEER_TIMEOUT:-900}" "$agent" -p \
       --mode ask \
       --trust \
-      --model "$(peer_model grok)" \
+      --model "$(peer_model cursor)" \
       --output-format json \
       --workspace "$repo" \
       "$prompt
 
 Your final reply must be only one JSON object matching this JSON schema, with no prose before or after it and no code fences:
-$(cat "$schema")" </dev/null >"$log" 2>"${log%.log}.err"
-    jq -e '.is_error == false' "$log" >/dev/null || { echo "grok run failed, see $log" >&2; return 1; }
+$(cat "$schema")" </dev/null >"$log" 2>"${log%.log}.err" || { echo "cursor failed or timed out after ${PEER_TIMEOUT:-900}s, see $log" >&2; return 1; }
+    jq -e '.is_error == false' "$log" >/dev/null || { echo "cursor run failed, see $log" >&2; return 1; }
     jq -r '.result' "$log" | python3 -I -c '
 import json, sys
 required = json.load(open(sys.argv[1]))["required"]
@@ -69,7 +69,7 @@ for i, ch in enumerate(text):
     if isinstance(obj, dict) and all(k in obj for k in required):
         found = obj
 if found is None:
-    sys.exit("no JSON object with keys %s in grok reply" % required)
+    sys.exit("no JSON object with keys %s in cursor reply" % required)
 json.dump(found, sys.stdout, indent=2)
 ' "$schema" >"$out"
     ;;

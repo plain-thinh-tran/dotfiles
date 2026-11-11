@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Blind, read-only code quality review of a PR gathered by prod-ready-check/gather.sh.
-# Usage: review.sh <context-dir> <codex|grok>   (writes <peer>.json and <peer>.log there)
+# Usage: review.sh <context-dir> <codex|cursor>   (writes <peer>.json and <peer>.log there)
 # Env: see prod-ready-check/peers.sh
 set -euo pipefail
 
-CTX="${1:?usage: review.sh <context-dir> <codex|grok>}"
-PEER="${2:?usage: review.sh <context-dir> <codex|grok>}"
+CTX="${1:?usage: review.sh <context-dir> <codex|cursor>}"
+PEER="${2:?usage: review.sh <context-dir> <codex|cursor>}"
 CTX="$(cd "$CTX" && pwd)"
 SKILL_DIR="$(cd "$(dirname "$0")" && pwd)"
 PRC_DIR="$HOME/.claude/skills/prod-ready-check"

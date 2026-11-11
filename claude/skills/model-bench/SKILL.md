@@ -12,7 +12,7 @@ A fixed benchmark over real Plain code, so a model choice rests on what a model 
 | Seat | Used by | Default lives in |
 |---|---|---|
 | Codex reviewer | prod-ready-check | `prod-ready-check/peers.sh` (`CODEX_MODEL`) |
-| Cursor reviewer | prod-ready-check | `prod-ready-check/peers.sh` (`GROK_MODEL`) |
+| Cursor reviewer | prod-ready-check | `prod-ready-check/peers.sh` (`CURSOR_MODEL`) |
 | Claude reviewer | prod-ready-check (main session) | Raumschiff Crew Lead seat |
 | Scout | prod-ready-check scouting step | `prod-ready-check/SKILL.md` (`SCOUT_MODEL`) |
 | Build worker | Raumschiff Worker seat | `mc seats worker` |

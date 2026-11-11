@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Debate between Claude and the peers (Codex and Grok, or only Codex on the lite tier) over their blind findings.
+# Debate between Claude and the peers (Codex and Cursor, or only Codex on the lite tier or when Cursor drops out) over their blind findings.
 # Usage:
-#   debate.sh items <context-dir>                 number findings into debate/items.json (C* Claude, X* Codex, G* Grok)
-#   debate.sh round <context-dir> <n> <peer>      peer (codex|grok) positions for round n -> debate/round-<n>.<peer>.json
+#   debate.sh items <context-dir>                 number findings into debate/items.json (C* Claude, X* Codex, U* Cursor)
+#   debate.sh round <context-dir> <n> <peer>      peer (codex|cursor) positions for round n -> debate/round-<n>.<peer>.json
 #   debate.sh tally <context-dir> <n>             merge all positions -> debate/tally-<n>.json
-# Env: see peers.sh; LENSES_FILE overrides lenses.md (check-code-quality uses its own); PRC_PEERS lists the peers (default "codex grok"); PRC_MAX_ROUNDS (default 3)
+# Env: see peers.sh; LENSES_FILE overrides lenses.md (check-code-quality uses its own); PRC_PEERS lists the peers (default "codex cursor"); PRC_MAX_ROUNDS (default 3)
 set -euo pipefail
 
 CMD="${1:?usage: debate.sh items|round|tally <context-dir> [round] [peer]}"
@@ -14,10 +14,10 @@ source "$SKILL_DIR/peers.sh"
 LENSES="${LENSES_FILE:-$SKILL_DIR/lenses.md}"
 DEBATE="$CTX/debate"
 MAX_ROUNDS="${PRC_MAX_ROUNDS:-3}"
-read -r -a PEERS <<<"${PRC_PEERS:-codex grok}"
+read -r -a PEERS <<<"${PRC_PEERS:-codex cursor}"
 REVIEWERS=(claude "${PEERS[@]}")
 prefix() {
-  case "$1" in claude) echo C ;; codex) echo X ;; grok) echo G ;; esac
+  case "$1" in claude) echo C ;; codex) echo X ;; cursor) echo U ;; esac
 }
 mkdir -p "$DEBATE"
 
@@ -35,7 +35,7 @@ items)
 
 round)
   ROUND="${3:?round required}"
-  PEER="${4:?peer required (codex|grok)}"
+  PEER="${4:?peer required (codex|cursor)}"
   NAME="$(peer_name "$PEER")"
   OTHER=""
   for p in "${PEERS[@]}"; do
@@ -71,7 +71,7 @@ You are $NAME. $CREW each reviewed pull request #$PR blind. You are now debating
 Read only: never edit files, never push, never call GitHub.
 
 Material:
-- All findings, numbered: $DEBATE/items.json (C* Claude's, X* Codex's, G* Grok's when Grok takes part; the owner field says whose)
+- All findings, numbered: $DEBATE/items.json (C* Claude's, X* Codex's, U* Cursor's when Cursor takes part; the owner field says whose)
 - Diff: $CTX/diff.patch. PR head is git ref pr-$PR, base is origin/$BASE. Read code only with git show pr-$PR:<path> or git show origin/$BASE:<path>, never from the working tree (a different branch), and cite locations as plain path:line with no ref prefix.
 - Review lenses: $LENSES
 $( [ -z "${LENSES_FILE:-}" ] && [ -f "$SKILL_DIR/taste.md" ] && echo "- Taste rules, findings Thinh has said he does not want: $SKILL_DIR/taste.md. An item a rule covers is out of scope: disagree, or withdraw your own." )

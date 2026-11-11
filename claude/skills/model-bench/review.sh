@@ -26,8 +26,8 @@ if [ "$RUNNER" = claude ]; then
   exit 0
 fi
 
-PEER="$([ "$RUNNER" = cursor ] && echo grok || echo codex)"
-export CODEX_MODEL="$MODEL" GROK_MODEL="$MODEL" CODEX_EFFORT="$EFFORT"
+PEER="$([ "$RUNNER" = cursor ] && echo cursor || echo codex)"
+export CODEX_MODEL="$MODEL" CURSOR_MODEL="$MODEL" CODEX_EFFORT="$EFFORT"
 START=$(date +%s)
 run_peer "$PEER" "$REPO" "$PRC/findings.schema.json" "$OUT/$TAG.json" "$OUT/$TAG.log" "$PROMPT"
 RC=$?

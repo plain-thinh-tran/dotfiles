@@ -1,11 +1,11 @@
 ---
 name: check-code-quality
-description: Review a PR for code smells and light refactors only (reinvented wheels, repo precedent, repetition, bloat, dead code, structure, conventions), never logic, with Claude, Codex and Grok reviewing blind and then debating, and apply the agreed fixes on request. Use when asked to check code quality, find code smells, or suggest refactors for a PR.
+description: Review a PR for code smells and light refactors only (reinvented wheels, repo precedent, repetition, bloat, dead code, structure, conventions), never logic, with Claude, Codex and Cursor reviewing blind and then debating, and apply the agreed fixes on request. Use when asked to check code quality, find code smells, or suggest refactors for a PR.
 ---
 
 # Check Code Quality
 
-Three reviewers, one list of cleanups: you, Codex and Grok review the same PR blind against [`lenses.md`](lenses.md), then debate every finding for up to three rounds. A finding is reported only when all three hold it. Scope is maintainability; whether the PR is correct or safe to ship is prod-ready-check's job.
+Three reviewers, one list of cleanups: you, Codex and Cursor review the same PR blind against [`lenses.md`](lenses.md), then debate every finding for up to three rounds. A finding is reported only when all three hold it. Scope is maintainability; whether the PR is correct or safe to ship is prod-ready-check's job.
 
 This skill reuses prod-ready-check's scripts. Below, `PRC=~/.claude/skills/prod-ready-check`, `CCQ=~/.claude/skills/check-code-quality`, and the context dir is `<repo>/.context/check-code-quality/pr-<N>`.
 
@@ -19,9 +19,9 @@ This skill reuses prod-ready-check's scripts. Below, `PRC=~/.claude/skills/prod-
    - the base version of each changed file.
 
    Merge the answers into `<context-dir>/scout.md`, one section per changed file. Done when every changed file has an entry, or "none found" with the search used.
-3. **Launch peers.** Start `$CCQ/review.sh <context-dir> codex` and `$CCQ/review.sh <context-dir> grok`, each with `run_in_background`. Leave their output unopened until step 5.
+3. **Launch peers.** Start `$CCQ/review.sh <context-dir> codex` and `$CCQ/review.sh <context-dir> cursor`, each with `run_in_background`. Leave their output unopened until step 5.
 4. **Own review.** Verify every scout lead yourself, then apply every lens in `lenses.md` to every changed file. Write `<context-dir>/claude.json` in the shape of `$PRC/findings.schema.json`. Use severity `refactor` or `dead-code` only. Done when the file exists and every lens has a finding or a `checked_fine` line.
-5. **Debate.** Run the debate exactly as `$PRC/SKILL.md` step 8 describes, using `$PRC/debate.sh` with `LENSES_FILE=$CCQ/lenses.md` exported on every call. If a peer fails, show its log tail and ask whether to rerun.
+5. **Debate.** Run the debate exactly as `$PRC/SKILL.md` step 8 describes, using `$PRC/debate.sh` with `LENSES_FILE=$CCQ/lenses.md` exported on every call. If a peer fails or times out, it drops out exactly as that step says: no rerun, no question, the debate goes on without it.
 
    Withdraw your own item when the others show it rests on no named helper, precedent or rule; that is taste. Hold it when the code backs it, and answer their argument with file:line. Done when the final tally exists and every contested item is in `<context-dir>/not-agreed.md` with all three stances.
 6. **Report** in the format below, then stop and wait for Thinh. Merge items that share a root cause into one, and say who found each.
@@ -30,7 +30,7 @@ This skill reuses prod-ready-check's scripts. Below, `PRC=~/.claude/skills/prod-
 
 ```
 Verdict: Clean | <n> cleanups worth doing | Needs your call, <one sentence on the split>
-Reviewers: Claude + Codex <model> + Grok <model>, <r> rounds, <n> agreed, <d> dropped, <m> contested (<context-dir>/not-agreed.md)
+Reviewers: Claude + Codex <model> + Cursor <model> ("<peer> dropped out: <reason>" for any that failed), <r> rounds, <n> agreed, <d> dropped, <m> contested (<context-dir>/not-agreed.md)
 
 ## Needs Your Call
 1. <title> (`path:line`). For: <who, why>. Against: <who, why>.
