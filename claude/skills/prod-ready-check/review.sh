@@ -27,6 +27,7 @@ Material:
 - Summary with review threads and the author's related PRs (ignore any CI status in it): $CTX/summary.md
 - PR head is the local git ref pr-$PR. Read PR files only with git show pr-$PR:<path> and base files only with git show origin/$BASE:<path>. The working tree is a different branch: never read source files from disk, and cite only code you read through git show.
 - Report every location as plain path:line with no ref prefix (not pr-$PR:path).
+- Other reviewers work next to you. Never open their output (claude.json, codex.json, cursor.json, fable.json or anything under debate/); this review is blind.
 - Compare against origin/$BASE. Local branches are stale.
 - Diffs of related PRs in other repos, if any: $CTX/external/
 $( [ -f "$CTX/scout.md" ] && echo "- Map of callers, consumers, tests and siblings from a scout (leads, verify before relying on them): $CTX/scout.md" )

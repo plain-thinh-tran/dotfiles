@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Debate between Claude and the peers (Codex and Cursor, or only Codex on the lite tier or when Cursor drops out) over their blind findings.
+# Debate between Claude and the peers (Codex and Cursor, plus Fable when asked, or fewer on the lite tier or when a peer drops out) over their blind findings.
 # Usage:
-#   debate.sh items <context-dir>                 number findings into debate/items.json (C* Claude, X* Codex, U* Cursor)
-#   debate.sh round <context-dir> <n> <peer>      peer (codex|cursor) positions for round n -> debate/round-<n>.<peer>.json
+#   debate.sh items <context-dir>                 number findings into debate/items.json (C* Claude, X* Codex, U* Cursor, F* Fable)
+#   debate.sh round <context-dir> <n> <peer>      peer (codex|cursor|fable) positions for round n -> debate/round-<n>.<peer>.json
 #   debate.sh tally <context-dir> <n>             merge all positions -> debate/tally-<n>.json
 # Env: see peers.sh; LENSES_FILE overrides lenses.md (check-code-quality uses its own); PRC_PEERS lists the peers (default "codex cursor"); PRC_MAX_ROUNDS (default 3)
 set -euo pipefail
@@ -17,7 +17,7 @@ MAX_ROUNDS="${PRC_MAX_ROUNDS:-3}"
 read -r -a PEERS <<<"${PRC_PEERS:-codex cursor}"
 REVIEWERS=(claude "${PEERS[@]}")
 prefix() {
-  case "$1" in claude) echo C ;; codex) echo X ;; cursor) echo U ;; esac
+  case "$1" in claude) echo C ;; codex) echo X ;; cursor) echo U ;; fable) echo F ;; esac
 }
 mkdir -p "$DEBATE"
 
@@ -35,20 +35,25 @@ items)
 
 round)
   ROUND="${3:?round required}"
-  PEER="${4:?peer required (codex|cursor)}"
+  PEER="${4:?peer required (codex|cursor|fable)}"
   NAME="$(peer_name "$PEER")"
-  OTHER=""
+  OTHER_PEERS=()
   for p in "${PEERS[@]}"; do
-    if [ "$p" != "$PEER" ]; then OTHER="$p"; fi
+    if [ "$p" != "$PEER" ]; then OTHER_PEERS+=("$p"); fi
   done
   CREW="You and Claude"
   OTHERS="Claude"
   OTHER_ITEMS=""
-  if [ -n "$OTHER" ]; then
-    OTHER_NAME="$(peer_name "$OTHER")"
-    CREW="You, Claude and $OTHER_NAME"
-    OTHERS="Claude or $OTHER_NAME"
-    OTHER_ITEMS=" and $OTHER_NAME's (owner $OTHER)"
+  if [ "${#OTHER_PEERS[@]}" -gt 0 ]; then
+    NAMES=(Claude)
+    for p in "${OTHER_PEERS[@]}"; do
+      NAMES+=("$(peer_name "$p")")
+      OTHER_ITEMS+=", $(peer_name "$p")'s (owner $p)"
+    done
+    LAST="${NAMES[${#NAMES[@]}-1]}"
+    LEAD="$(IFS=,; echo "${NAMES[*]:0:${#NAMES[@]}-1}" | sed 's/,/, /g')"
+    CREW="You, $LEAD and $LAST"
+    OTHERS="$LEAD or $LAST"
   fi
   REPO_DIR="$(git -C "$CTX" rev-parse --show-toplevel 2>/dev/null || pwd)"
   PR="$(jq -r .number "$CTX/meta.json")"
@@ -57,7 +62,7 @@ round)
   PRIOR=""
   for ((k = 1; k < ROUND; k++)); do
     OTHER_ROUND=""
-    if [ -n "$OTHER" ]; then OTHER_ROUND=" $OTHER_NAME $DEBATE/round-$k.$OTHER.json,"; fi
+    for p in ${OTHER_PEERS[@]+"${OTHER_PEERS[@]}"}; do OTHER_ROUND+=" $(peer_name "$p") $DEBATE/round-$k.$p.json,"; done
     PRIOR+="- round $k: Claude $DEBATE/round-$k.claude.json,$OTHER_ROUND you $DEBATE/round-$k.$PEER.json"$'\n'
   done
   if [ "$ROUND" -eq 1 ]; then
@@ -71,13 +76,14 @@ You are $NAME. $CREW each reviewed pull request #$PR blind. You are now debating
 Read only: never edit files, never push, never call GitHub.
 
 Material:
-- All findings, numbered: $DEBATE/items.json (C* Claude's, X* Codex's, U* Cursor's when Cursor takes part; the owner field says whose)
+- All findings, numbered: $DEBATE/items.json (C* Claude's, X* Codex's, U* Cursor's, F* Fable's, for those taking part; the owner field says whose)
 - Diff: $CTX/diff.patch. PR head is git ref pr-$PR, base is origin/$BASE. Read code only with git show pr-$PR:<path> or git show origin/$BASE:<path>, never from the working tree (a different branch), and cite locations as plain path:line with no ref prefix.
 - Review lenses: $LENSES
 $( [ -z "${LENSES_FILE:-}" ] && [ -f "$SKILL_DIR/taste.md" ] && echo "- Taste rules, findings Thinh has said he does not want: $SKILL_DIR/taste.md. An item a rule covers is out of scope: disagree, or withdraw your own." )
 - Diffs of related PRs in other repos, if any: $CTX/external/
 $PRIOR
 $SCOPE
+Never open any round-$ROUND file of another reviewer: each round is blind until it is tallied.
 
 Stances:
 - On items owned by $OTHERS: agree (real and actionable as stated), revise (real, but at the severity or fix you give), disagree (not real, not reachable, not actionable, or out of scope).

@@ -1,16 +1,23 @@
 #!/usr/bin/env bash
 # Blind, read-only code quality review of a PR gathered by prod-ready-check/gather.sh.
-# Usage: review.sh <context-dir> <codex|cursor>   (writes <peer>.json and <peer>.log there)
+# Usage: review.sh <context-dir> <codex|cursor|fable> [lenses]   (writes <peer>.json and <peer>.log there)
+# lenses: comma separated lens names from lenses.md, or "all" (the default)
 # Env: see prod-ready-check/peers.sh
 set -euo pipefail
 
-CTX="${1:?usage: review.sh <context-dir> <codex|cursor>}"
-PEER="${2:?usage: review.sh <context-dir> <codex|cursor>}"
+CTX="${1:?usage: review.sh <context-dir> <codex|cursor|fable> [lenses]}"
+PEER="${2:?usage: review.sh <context-dir> <codex|cursor|fable> [lenses]}"
 CTX="$(cd "$CTX" && pwd)"
 SKILL_DIR="$(cd "$(dirname "$0")" && pwd)"
 PRC_DIR="$HOME/.claude/skills/prod-ready-check"
 source "$PRC_DIR/peers.sh"
 peer_name "$PEER" >/dev/null
+FOCUS="${3:-all}"
+if [ "$FOCUS" = all ]; then
+  FOCUS_TEXT="Apply every lens below to every changed file."
+else
+  FOCUS_TEXT="Your lenses: ${FOCUS//,/, }. The other reviewers own the other lenses, so report findings only under yours, and apply yours exhaustively to every changed file; the instruction below to apply every lens means every one of yours. Coming back with no findings is a valid answer: never pad the list with weak items."
+fi
 
 [ -f "$CTX/meta.json" ] || { echo "$CTX/meta.json missing, run gather.sh first" >&2; exit 1; }
 
@@ -28,9 +35,12 @@ Material:
 - Summary with review threads and the author's related PRs (ignore any CI status in it): $CTX/summary.md
 - PR head is the local git ref pr-$PR. Read PR files only with git show pr-$PR:<path> and base files only with git show origin/$BASE:<path>. The working tree is a different branch: never read source files from disk, and cite only code you read through git show.
 - Report every location as plain path:line with no ref prefix (not pr-$PR:path).
+- Other reviewers work next to you. Never open their output (claude.json, codex.json, cursor.json, fable.json or anything under debate/); this review is blind.
 $( [ -f "$CTX/scout.md" ] && echo "- Map of existing helpers, precedents and callers from a scout (leads, verify before relying on them): $CTX/scout.md" )
 
 Search the repo for the existing helpers, components, hooks and patterns the changed code could reuse.
+
+$FOCUS_TEXT
 
 $(cat "$SKILL_DIR/lenses.md")
 
@@ -41,4 +51,4 @@ EOF
 run_peer "$PEER" "$REPO_DIR" "$PRC_DIR/findings.schema.json" "$CTX/$PEER.json" "$CTX/$PEER.log" "$PROMPT"
 
 jq -e '.findings' "$CTX/$PEER.json" >/dev/null
-echo "$PEER ($(peer_model "$PEER")) findings: $(jq '.findings | length' "$CTX/$PEER.json") -> $CTX/$PEER.json"
+echo "$PEER ($(peer_model "$PEER"), lenses: $FOCUS) findings: $(jq '.findings | length' "$CTX/$PEER.json") -> $CTX/$PEER.json"

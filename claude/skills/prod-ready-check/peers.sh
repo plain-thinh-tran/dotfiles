@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # Shared runner for the peer reviewers, sourced by review.sh and debate.sh.
-# Env: PEER_TIMEOUT (default 900s), CODEX_MODEL and CURSOR_MODEL (default: the Codex and Cursor seats from `mc seats`, else gpt-6.1-sol and gpt-5.6-sol-high-fast), CODEX_EFFORT (default: the Codex seat's effort from `mc seats codex --effort`, else high)
+# Env: PEER_TIMEOUT (default 900s), CODEX_MODEL and CURSOR_MODEL (default: the Codex and Cursor seats from `mc seats`, else gpt-6.1-sol and gpt-5.6-sol-high-fast), CODEX_EFFORT (default: the Codex seat's effort from `mc seats codex --effort`, else high), FABLE_MODEL (default claude-fable-5-2), FABLE_EFFORT (default high), FABLE_BUDGET_USD (default 10, per call)
 
 peer_name() {
   case "$1" in
   codex) echo Codex ;;
   cursor) echo Cursor ;;
-  *) echo "unknown peer: $1 (codex|cursor)" >&2; return 1 ;;
+  fable) echo Fable ;;
+  *) echo "unknown peer: $1 (codex|cursor|fable)" >&2; return 1 ;;
   esac
 }
 
@@ -20,6 +21,7 @@ peer_model() {
   case "$1" in
   codex) echo "${CODEX_MODEL:-$("$HOME/.claude/bin/mc" seats codex 2>/dev/null || echo gpt-6.1-sol)}" ;;
   cursor) echo "${CURSOR_MODEL:-$("$HOME/.claude/bin/mc" seats cursor 2>/dev/null || echo gpt-5.6-sol-high-fast)}" ;;
+  fable) echo "${FABLE_MODEL:-claude-fable-5-2}" ;;
   esac
 }
 
@@ -72,6 +74,25 @@ if found is None:
     sys.exit("no JSON object with keys %s in cursor reply" % required)
 json.dump(found, sys.stdout, indent=2)
 ' "$schema" >"$out"
+    ;;
+  fable)
+    local claude strip
+    claude="$(command -v claude || echo "$HOME/.local/bin/claude")"
+    [ -x "$claude" ] || { echo "claude not installed" >&2; return 1; }
+    strip="$(env | grep -oE '^(CONDUCTOR|CLAUDE_CODE|CLAUDE_RC)_[A-Za-z0-9_]*' | sed 's/^/-u /' | tr '\n' ' ')"
+    (cd "$repo" && perl -e 'alarm shift; exec @ARGV' "${PEER_TIMEOUT:-900}" env $strip "$claude" -p "$prompt" \
+      --model "$(peer_model fable)" \
+      --effort "${FABLE_EFFORT:-high}" \
+      --output-format json \
+      --json-schema "$(cat "$schema")" \
+      --no-session-persistence \
+      --setting-sources project \
+      --strict-mcp-config \
+      --max-budget-usd "${FABLE_BUDGET_USD:-10}" \
+      --allowedTools Read Grep Glob "Bash(git show:*)" "Bash(git grep:*)" "Bash(git log:*)" "Bash(git diff:*)" \
+      --disallowedTools Edit Write NotebookEdit WebFetch WebSearch Task Agent) </dev/null >"$log" 2>"${log%.log}.err" || { echo "fable failed or timed out after ${PEER_TIMEOUT:-900}s, see $log" >&2; return 1; }
+    jq -e '.is_error == false and .structured_output != null' "$log" >/dev/null || { echo "fable run failed, see $log" >&2; return 1; }
+    jq '.structured_output' "$log" >"$out"
     ;;
   *)
     peer_name "$peer" >/dev/null
