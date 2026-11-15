@@ -49,8 +49,7 @@ allowing me to continue talking to you in the main chat, and to keep costs down.
 
 **ALWAYS run these commands before any `git push`:**
 1. `~/.claude/bin/typecheck-changed` (add `-b <base>` for stacked PRs). It skips when no TypeScript changed since the last push and otherwise builds only the touched projects, throttled. Never run the full `pnpm typecheck` yourself; it melts the laptop and CI runs it anyway.
-2. `pnpm run format:fix`
-3. `pnpm run tofu:fmt`
+2. `pnpm run tofu:fmt`
 
 Do not push until all pass successfully.
 
@@ -72,6 +71,7 @@ Current files:
 - `~/.claude/memory/vendors.md` — Third-party vendors and integrations
 - `~/.claude/memory/mistakes.md` — Mistakes and learnings from past sessions
 - `~/.claude/memory/ci-deploy.md` — Bar and banned ideas for deploy/CI time work
+- `~/.claude/memory/ops.md` — Prod ops runbooks (draining SQS DLQs)
 
 **Workflow:**
 1. At the start of a session, read relevant memory files from `~/.claude/memory/` based on the task

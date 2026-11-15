@@ -66,7 +66,7 @@ Run this only when Thinh names the findings to apply ("do the refactors"). Conte
    Workers leave git alone: no commit, push, stash or branch switch.
 3. **Verify.** Treat each worker report as a lead. Read every diff yourself, and remove anything the packet did not ask for, such as an export nothing uses. Rerun Biome and the tests over every touched directory. When codegen cannot run, hand edit the generated lines to match the source change and say so.
 4. **Ship.**
-   - **Thinh's own PR:** commit, run the pre-push checklist (`~/.claude/bin/typecheck-changed`, `pnpm run format:fix`, and `pnpm run tofu:fmt` where defined), then push to the PR branch.
+   - **Thinh's own PR:** commit, run the pre-push checklist (`~/.claude/bin/typecheck-changed`, and `pnpm run tofu:fmt` where defined), then push to the PR branch.
    - **Someone else's PR:** draft one inline comment per finding instead of pushing, and post only after Thinh approves the text.
 
    Done when every applied finding is listed with its commit, or with its posted comment.
