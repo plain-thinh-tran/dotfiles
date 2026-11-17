@@ -146,6 +146,7 @@ link "$DOTFILES_DIR/claude/settings.json" "$HOME/.claude/settings.json"
 link "$DOTFILES_DIR/claude/statusline-command.sh" "$HOME/.claude/statusline-command.sh"
 link "$DOTFILES_DIR/claude/bin/claude-rc" "$HOME/.claude/bin/claude-rc"
 link "$DOTFILES_DIR/claude/bin/chrome-agents" "$HOME/.claude/bin/chrome-agents"
+link "$DOTFILES_DIR/claude/bin/ascii-diagram" "$HOME/.claude/bin/ascii-diagram"
 
 if command -v rtk &>/dev/null; then
   if grep -q '"rtk hook claude"' "$DOTFILES_DIR/claude/settings.json" 2>/dev/null; then
