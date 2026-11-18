@@ -22,8 +22,10 @@ Default to `layers`. Reach for `Canvas` only after a JSON spec renders a layout 
 
 1. Print the starting spec: `ascii-diagram example <type>`.
 2. Write the spec to a file and render it. Nodes take a string or a list of lines.
-3. Read the output and fix the layout until no line crosses a box and every edge reads unambiguously. Done when the render is that clean.
-4. Put the result in a fenced code block wherever it goes.
+3. Read the output and fix the layout until no line crosses a box and every edge reads unambiguously.
+4. Keep it lean: at most 100 columns and about 45 rows, so it fits a GitHub code block without horizontal scroll and one screen without scrolling down. Measure width with Python (`awk length` counts bytes). When it runs over, move small boxes into empty space beside big ones, use one blank row between stacked boxes that no edge runs between, and trim fields that carry no edge.
+5. Put the result in a fenced code block wherever it goes.
+6. Check it rendered in the browser with the chrome-devtools MCP. Open the page in your own tab with `new_page`, then run `evaluate_script` with `pre.scrollIntoView()` and return `pre.scrollWidth`, `pre.clientWidth`, `pre.getBoundingClientRect().height` and `innerHeight`. Take a screenshot and look at it. Done when `scrollWidth == clientWidth`, the height fits `innerHeight`, and the screenshot reads cleanly. Otherwise fix, republish, reload and check again. Close your tab when done.
 
 ## Layers Spec
 
